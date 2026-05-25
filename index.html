@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>appf</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- NOVO: emoji-picker-element via CDN -->
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">💰</div>
+        <div>
+          <h1>Finanças do Mês</h1>
+          <small id="currentMonthLabel"></small>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <button class="active" data-section="dashboard">📊 Dashboard</button>
+        <button data-section="incomes">⬆️ Entradas</button>
+        <button data-section="fixed">📌 Despesas fixas</button>
+        <button data-section="variable">🧾 Despesas variáveis</button>
+        <button data-section="supermarket">🛒 Supermercado</button>
+        <button data-section="categories">🏷️ Categorias</button>
+      </nav>
+
+      <div class="sidebar-actions">
+        <button class="btn secondary full" id="themeToggle">🌙 Alternar tema</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <button class="btn secondary mobile-menu" id="mobileMenu">☰ Menu</button>
+          <h2 id="pageTitle">Dashboard</h2>
+          <p>Controle entradas, despesas fixas e variáveis do mês vigente.</p>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" id="openHouseSplit">🏠 Rateio da casa</button>
+          <button class="btn secondary" id="openHouseExpenses">🏡 Despesas da Casa</button>
+        </div>
+      </header>
+
+      <section class="section active" id="dashboard">
+        <div class="grid cards">
+          <article class="card metric">
+            <div><span>Total de receitas</span><strong id="dashIncome">R$ 0,00</strong></div>
+            <div class="icon">⬆️</div>
+          </article>
+          <article class="card metric">
+            <div><span>Total de despesas</span><strong id="dashExpense">R$ 0,00</strong></div>
+            <div class="icon">⬇️</div>
+          </article>
+          <article class="card metric">
+            <div><span>Saldo do mês</span><strong id="dashBalance">R$ 0,00</strong></div>
+            <div class="icon">⚖️</div>
+          </article>
+          <article class="card metric">
+            <div><span>Despesas fixas</span><strong id="dashFixed">R$ 0,00</strong></div>
+            <div class="icon">📌</div>
+          </article>
+        </div>
+
+        <div class="grid two dashboard-charts">
+          <article class="card">
+            <div class="section-head compact-head">
+              <h3>Gastos por categoria</h3>
+              <span class="muted">Fixas + variáveis</span>
+            </div>
+            <div class="chart-box"><canvas id="categoryChart"></canvas></div>
+          </article>
+
+          <article class="card">
+            <div class="section-head compact-head">
+              <h3>Análise de despesas da casa</h3>
+              <span class="muted">Baseada no rateio e nas despesas da casa</span>
+            </div>
+            <div class="house-analysis" id="houseAnalysis"></div>
+          </article>
+        </div>
+
+        <article class="card expense-percent-card">
+          <div class="section-head compact-head">
+            <h3>Percentual por tipo de despesa</h3>
+            <span class="muted">Fixas, variáveis, supermercado e casa</span>
+          </div>
+          <div class="expense-percent-list" id="expenseTypePercentages"></div>
+        </article>
+      </section>
+
+      <section class="section" id="incomes">
+        <article class="card entry-form-card">
+          <div class="section-head compact-head">
+            <h3 id="incomeFormTitle">Nova entrada</h3>
+            <button class="btn secondary small" id="clearIncomeForm">Limpar</button>
+          </div>
+          <form id="incomeForm" class="form-grid compact">
+            <input type="hidden" id="incomeId" />
+            <div class="field"><label>Nome</label><input id="incomeName" required maxlength="80" placeholder="Ex: Salário" /></div>
+            <div class="field"><label>Valor</label><input id="incomeValue" required type="number" min="0.01" step="0.01" /></div>
+            <div class="field"><label>Categoria</label><select id="incomeCategory" required></select></div>
+            <button class="btn" type="submit">💾 Salvar entrada</button>
+          </form>
+        </article>
+
+        <div class="section-head">
+          <h3>Entradas cadastradas</h3>
+          <strong id="incomeTotal">R$ 0,00</strong>
+        </div>
+        <div class="table-wrap">
+          <table class="simple-table">
+            <thead><tr><th>Nome</th><th>Valor</th><th>Categoria</th><th>Ações</th></tr></thead>
+            <tbody id="incomeTable"></tbody>
+            <tfoot><tr><td>Total</td><td id="incomeFooterTotal">R$ 0,00</td><td colspan="2"></td></tr></tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" id="fixed">
+        <article class="card entry-form-card">
+          <div class="section-head compact-head">
+            <h3 id="fixedFormTitle">Nova despesa fixa</h3>
+            <button class="btn secondary small" id="clearFixedForm">Limpar</button>
+          </div>
+          <form id="fixedForm" class="form-grid compact">
+            <input type="hidden" id="fixedId" />
+            <div class="field"><label>Nome</label><input id="fixedName" required maxlength="80" placeholder="Ex: Aluguel" /></div>
+            <div class="field"><label>Valor</label><input id="fixedValue" required type="number" min="0.01" step="0.01" /></div>
+            <div class="field"><label>Categoria</label><select id="fixedCategory" required></select></div>
+            <button class="btn" type="submit">💾 Salvar despesa</button>
+          </form>
+        </article>
+
+        <div class="section-head">
+          <h3>Despesas fixas</h3>
+          <strong id="fixedTotal">R$ 0,00</strong>
+        </div>
+        <div class="table-wrap">
+          <table class="simple-table">
+            <thead><tr><th>Nome</th><th>Valor</th><th>Categoria</th><th>Pago</th><th>Ações</th></tr></thead>
+            <tbody id="fixedTable"></tbody>
+            <tfoot><tr><td>Total</td><td id="fixedFooterTotal">R$ 0,00</td><td colspan="3"></td></tr></tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" id="variable">
+        <article class="card entry-form-card">
+          <div class="section-head compact-head">
+            <h3 id="variableFormTitle">Nova despesa variável</h3>
+            <button class="btn secondary small" id="clearVariableForm">Limpar</button>
+          </div>
+          <form id="variableForm" class="form-grid compact">
+            <input type="hidden" id="variableId" />
+            <div class="field"><label>Nome</label><input id="variableName" required maxlength="80" placeholder="Ex: Mercado" /></div>
+            <div class="field"><label>Valor</label><input id="variableValue" required type="number" min="0.01" step="0.01" /></div>
+            <div class="field"><label>Categoria</label><select id="variableCategory" required></select></div>
+            <button class="btn" type="submit">💾 Salvar despesa</button>
+          </form>
+        </article>
+
+        <div class="section-head">
+          <h3>Despesas variáveis</h3>
+          <strong id="variableTotal">R$ 0,00</strong>
+        </div>
+        <div class="table-wrap">
+          <table class="simple-table">
+            <thead><tr><th>Nome</th><th>Valor</th><th>Categoria</th><th>Pago</th><th>Ações</th></tr></thead>
+            <tbody id="variableTable"></tbody>
+            <tfoot><tr><td>Total</td><td id="variableFooterTotal">R$ 0,00</td><td colspan="3"></td></tr></tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" id="supermarket">
+        <article class="card entry-form-card">
+          <div class="section-head compact-head">
+            <h3 id="supermarketFormTitle">Nova despesa de supermercado</h3>
+            <button class="btn secondary small" id="clearSupermarketForm">Limpar</button>
+          </div>
+          <form id="supermarketForm" class="form-grid compact">
+            <input type="hidden" id="supermarketId" />
+            <div class="field"><label>Valor</label><input id="supermarketValue" required type="number" min="0.01" step="0.01" /></div>
+            <div class="field">
+              <label>Forma de pagamento</label>
+              <select id="supermarketPayment" required>
+                <option value="pix">Pix</option>
+                <option value="cartao">Cartão</option>
+              </select>
+            </div>
+            <button class="btn" type="submit">💾 Salvar despesa</button>
+          </form>
+        </article>
+
+        <div class="section-head">
+          <h3>Despesas de supermercado</h3>
+          <strong id="supermarketTotal">R$ 0,00</strong>
+        </div>
+        <div class="table-wrap">
+          <table class="simple-table">
+            <thead><tr><th>Valor</th><th>Forma de pagamento</th><th>Ações</th></tr></thead>
+            <tbody id="supermarketTable"></tbody>
+            <tfoot><tr><td>Total</td><td id="supermarketFooterTotal">R$ 0,00</td><td></td></tr></tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" id="categories">
+        <article class="card entry-form-card">
+          <div class="section-head compact-head">
+            <h3 id="categoryFormTitle">Nova categoria</h3>
+            <button class="btn secondary small" id="clearCategoryForm">Limpar</button>
+          </div>
+          <form id="categoryForm" class="form-grid compact">
+            <input type="hidden" id="categoryId" />
+            <div class="field"><label>Nome</label><input id="categoryName" required maxlength="32" placeholder="Ex: Casa" /></div>
+
+            <!-- ALTERADO: campo de ícone substituído pelo emoji picker -->
+            <div class="field">
+              <label>Ícone</label>
+              <div class="emoji-picker-wrap">
+                <button type="button" class="btn secondary emoji-trigger" id="emojiTrigger">🏷️</button>
+                <input type="hidden" id="categoryIcon" value="🏷️" />
+                <div id="emojiPickerContainer" hidden></div>
+              </div>
+            </div>
+
+            <div class="field"><label>Cor</label><input id="categoryColor" required type="color" value="#0f8f7f" /></div>
+            <button class="btn" type="submit">💾 Salvar categoria</button>
+          </form>
+        </article>
+
+        <div class="section-head"><h3>Categorias cadastradas</h3></div>
+        <div class="category-grid" id="categoriesList"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="fixed-close">
+    <button class="btn danger" id="closeMonth">📄 Encerrar mês e exportar PDF</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="modal-backdrop" id="houseExpensesModal">
+    <div class="modal modal-wide">
+      <div class="section-head compact-head">
+        <h3>Despesas da Casa</h3>
+        <button class="btn secondary small" id="closeHouseExpenses">Fechar</button>
+      </div>
+      <form id="houseExpensesForm">
+        <div class="table-wrap">
+          <table class="simple-table house-expenses-table">
+            <thead><tr><th>Despesa</th><th>Valor</th></tr></thead>
+            <tbody>
+              <tr><td>Aluguel</td><td><input id="houseExpenseRent" type="number" min="0" step="0.01" /></td></tr>
+              <tr><td>Condomínio</td><td><input id="houseExpenseCondo" type="number" min="0" step="0.01" /></td></tr>
+              <tr><td>Gás</td><td><input id="houseExpenseGas" type="number" min="0" step="0.01" /></td></tr>
+              <tr><td>Energia</td><td><input id="houseExpenseEnergy" type="number" min="0" step="0.01" /></td></tr>
+              <tr><td>Internet</td><td><input id="houseExpenseInternet" type="number" min="0" step="0.01" /></td></tr>
+            </tbody>
+            <tfoot><tr><td>Total</td><td id="houseExpensesTotal">R$ 0,00</td></tr></tfoot>
+          </table>
+        </div>
+        <div class="modal-actions modal-actions-spaced">
+          <span class="muted">Esse total alimenta automaticamente o rateio proporcional.</span>
+          <button class="btn" type="submit">💾 Salvar despesas</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="houseModal">
+    <div class="modal modal-wide">
+      <div class="section-head compact-head">
+        <h3>Rateio proporcional da casa</h3>
+        <button class="btn secondary small" id="closeHouseSplit">Fechar</button>
+      </div>
+      <form id="houseForm" class="form-grid">
+        <div class="field"><label>Pessoa 1</label><input id="housePerson1" maxlength="40" placeholder="Nome" /></div>
+        <div class="field"><label>Renda pessoa 1</label><input id="houseIncome1" type="number" min="0" step="0.01" /></div>
+        <div class="field"><label>Pessoa 2</label><input id="housePerson2" maxlength="40" placeholder="Nome" /></div>
+        <div class="field"><label>Renda pessoa 2</label><input id="houseIncome2" type="number" min="0" step="0.01" /></div>
+        <div class="field"><label>Total despesas da casa</label><input id="houseTotal" type="number" min="0" step="0.01" readonly /></div>
+        <button class="btn" type="submit">💾 Salvar rateio</button>
+      </form>
+      <div class="section-head"><h3>Resultado</h3></div>
+      <div class="house-result" id="houseResult"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="confirmModal">
+    <div class="modal">
+      <h3 id="modalTitle">Confirmar ação</h3>
+      <p id="modalText"></p>
+      <div class="modal-actions">
+        <button class="btn secondary" id="modalCancel">Cancelar</button>
+        <button class="btn danger" id="modalConfirm">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pdfReport"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
