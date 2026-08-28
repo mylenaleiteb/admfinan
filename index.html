@@ -7,11 +7,32 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- NOVO: emoji-picker-element via CDN -->
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="auth-screen active" id="authScreen">
+    <article class="auth-window">
+      <div class="auth-titlebar">Finanças do Mês · Acesso seguro</div>
+      <div class="auth-content">
+        <div class="auth-brand-mark">💰</div>
+        <div>
+          <h2>Acesse seus dados financeiros</h2>
+          <p class="muted">Entre com sua conta para acessar os mesmos dados em qualquer dispositivo.</p>
+        </div>
+        <form id="authForm" class="auth-form">
+          <div class="field"><label>E-mail</label><input id="authEmail" type="email" autocomplete="email" required /></div>
+          <div class="field"><label>Senha</label><input id="authPassword" type="password" autocomplete="current-password" minlength="6" required /></div>
+          <button class="btn" type="submit" id="signInButton">Entrar</button>
+          <button class="btn secondary" type="button" id="signUpButton">Criar conta</button>
+        </form>
+        <p class="auth-message" id="authMessage" role="status"></p>
+      </div>
+    </article>
+  </div>
+
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
@@ -28,6 +49,7 @@
         <button data-section="fixed">📌 Despesas fixas</button>
         <button data-section="variable">🧾 Despesas variáveis</button>
         <button data-section="supermarket">🛒 Supermercado</button>
+        <button data-section="investments">📈 Investimentos</button>
         <button data-section="categories">🏷️ Categorias</button>
       </nav>
 
@@ -44,6 +66,12 @@
           <p>Controle entradas, despesas fixas e variáveis do mês vigente.</p>
         </div>
         <div class="actions">
+          <div class="sync-box" id="userSession" hidden>
+            <span class="sync-status" id="cloudSyncStatus">Carregando...</span>
+            <span class="user-email" id="userEmail"></span>
+            <button class="btn secondary small" id="retryCloudSync">Sincronizar</button>
+            <button class="btn secondary small" id="signOutButton">Sair</button>
+          </div>
           <button class="btn secondary" id="openHouseSplit">🏠 Rateio da casa</button>
           <button class="btn secondary" id="openHouseExpenses">🏡 Despesas da Casa</button>
         </div>
@@ -66,6 +94,10 @@
           <article class="card metric">
             <div><span>Despesas fixas</span><strong id="dashFixed">R$ 0,00</strong></div>
             <div class="icon">📌</div>
+          </article>
+          <article class="card metric">
+            <div><span>Aportes no mês</span><strong id="dashInvestments">R$ 0,00</strong></div>
+            <div class="icon">📈</div>
           </article>
         </div>
 
@@ -94,6 +126,144 @@
           </div>
           <div class="expense-percent-list" id="expenseTypePercentages"></div>
         </article>
+      </section>
+
+      <section class="section" id="investments">
+        <div class="grid cards investment-metrics">
+          <article class="card metric">
+            <div><span>Patrimônio atual</span><strong id="investmentPatrimony">R$ 0,00</strong></div>
+            <div class="icon">💼</div>
+          </article>
+          <article class="card metric">
+            <div><span>Aportado líquido</span><strong id="investmentNetContributed">R$ 0,00</strong></div>
+            <div class="icon">💰</div>
+          </article>
+          <article class="card metric">
+            <div><span>Resultado acumulado</span><strong id="investmentResult">R$ 0,00</strong></div>
+            <div class="icon">📊</div>
+          </article>
+          <article class="card metric">
+            <div><span>Proventos recebidos</span><strong id="investmentIncome">R$ 0,00</strong></div>
+            <div class="icon">🪙</div>
+          </article>
+        </div>
+
+        <div class="grid two investment-charts">
+          <article class="card">
+            <div class="section-head compact-head">
+              <h3>Distribuição por classe</h3>
+              <span class="muted">Com base no patrimônio atual</span>
+            </div>
+            <div class="chart-box"><canvas id="investmentAllocationChart"></canvas></div>
+          </article>
+          <article class="card">
+            <div class="section-head compact-head">
+              <h3>Evolução do patrimônio</h3>
+              <span class="muted">Atualizada ao salvar os saldos</span>
+            </div>
+            <div class="chart-box"><canvas id="investmentEvolutionChart"></canvas></div>
+          </article>
+        </div>
+
+        <article class="card cdi-sync-card">
+          <div>
+            <strong>Rentabilidade automática pelo CDI</strong>
+            <span class="muted" id="cdiSyncStatus">Nenhum investimento automático cadastrado.</span>
+          </div>
+          <button class="btn secondary" id="refreshCdiRates">🔄 Atualizar CDI</button>
+        </article>
+
+        <article class="card investment-form-card">
+          <div class="section-head compact-head">
+            <h3 id="investmentFormTitle">Novo investimento</h3>
+            <button class="btn secondary small" id="clearInvestmentForm">Limpar</button>
+          </div>
+          <form id="investmentForm" class="form-grid investment-form">
+            <input type="hidden" id="investmentId" />
+            <div class="field"><label>Nome</label><input id="investmentName" required maxlength="80" placeholder="Ex: Tesouro Selic 2029" /></div>
+            <div class="field">
+              <label>Classe</label>
+              <select id="investmentType" required>
+                <option value="fixed_income">Renda fixa</option>
+                <option value="stocks">Ações</option>
+                <option value="real_estate_funds">Fundos imobiliários</option>
+                <option value="funds">Fundos</option>
+                <option value="crypto">Criptomoedas</option>
+                <option value="pension">Previdência</option>
+                <option value="other">Outros</option>
+              </select>
+            </div>
+            <div class="field"><label>Instituição</label><input id="investmentInstitution" required maxlength="60" placeholder="Ex: Banco ou corretora" /></div>
+            <div class="field">
+              <label>Atualização do saldo</label>
+              <select id="investmentYieldMode" required>
+                <option value="manual">Manual</option>
+                <option value="cdi">Automática pelo CDI</option>
+              </select>
+            </div>
+            <div class="field cdi-field" id="investmentCdiPercentageField" hidden><label>Percentual do CDI</label><input id="investmentCdiPercentage" type="number" min="0" step="0.01" value="100" /></div>
+            <div class="field cdi-field" id="investmentBaseDateField" hidden><label>Data-base do saldo</label><input id="investmentBaseDate" type="date" /></div>
+            <div class="field"><label id="investmentCurrentValueLabel">Saldo atual</label><input id="investmentCurrentValue" required type="number" min="0" step="0.01" /></div>
+            <div class="field"><label>Aporte inicial (novo cadastro)</label><input id="investmentInitialContribution" type="number" min="0" step="0.01" /></div>
+            <button class="btn" type="submit">💾 Salvar investimento</button>
+          </form>
+          <p class="muted cdi-form-help" id="investmentCdiHelp" hidden>Informe o saldo que existia na data-base. O app aplicará o CDI dos dias seguintes até a última taxa disponível. Valores são estimativas brutas, antes de IR e IOF.</p>
+        </article>
+
+        <div class="section-head">
+          <h3>Carteira de investimentos</h3>
+          <div class="actions">
+            <button class="btn secondary small" id="exportInvestments">Exportar backup</button>
+            <button class="btn secondary small" id="importInvestments">Importar backup</button>
+            <input id="investmentBackupFile" type="file" accept="application/json,.json" hidden />
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="simple-table investment-table">
+            <thead><tr><th>Investimento</th><th>Classe</th><th>Instituição</th><th>Atualização</th><th>Aportado líquido</th><th>Valor atual</th><th>Resultado</th><th>Ações</th></tr></thead>
+            <tbody id="investmentTable"></tbody>
+            <tfoot><tr><td colspan="4">Total</td><td id="investmentTableNetTotal">R$ 0,00</td><td id="investmentTableValueTotal">R$ 0,00</td><td id="investmentTableResultTotal">R$ 0,00</td><td></td></tr></tfoot>
+          </table>
+        </div>
+
+        <article class="card movement-form-card">
+          <div class="section-head compact-head">
+            <h3 id="movementFormTitle">Nova movimentação</h3>
+            <button class="btn secondary small" id="clearMovementForm">Limpar</button>
+          </div>
+          <form id="movementForm" class="form-grid movement-form">
+            <input type="hidden" id="movementId" />
+            <div class="field"><label>Investimento</label><select id="movementInvestment" required></select></div>
+            <div class="field"><label>Data</label><input id="movementDate" required type="date" /></div>
+            <div class="field">
+              <label>Tipo</label>
+              <select id="movementType" required>
+                <option value="contribution">Aporte</option>
+                <option value="withdrawal">Resgate</option>
+                <option value="income">Provento recebido</option>
+                <option value="fee">Taxa</option>
+              </select>
+            </div>
+            <div class="field"><label>Valor</label><input id="movementValue" required type="number" min="0.01" step="0.01" /></div>
+            <div class="field"><label>Observação</label><input id="movementNote" maxlength="100" placeholder="Opcional" /></div>
+            <button class="btn" type="submit">💾 Salvar movimentação</button>
+          </form>
+        </article>
+
+        <div class="section-head movement-history-head">
+          <h3>Histórico de movimentações</h3>
+          <div class="history-filters">
+            <div class="field"><label>Mês</label><input id="movementMonthFilter" type="month" /></div>
+            <div class="field"><label>Investimento</label><select id="movementAssetFilter"></select></div>
+            <button class="btn secondary small" id="clearMovementFilters">Ver todos</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="simple-table">
+            <thead><tr><th>Data</th><th>Investimento</th><th>Tipo</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+            <tbody id="movementTable"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="section" id="incomes">
@@ -310,6 +480,7 @@
 
   <div id="pdfReport"></div>
 
+  <script src="supabase-config.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

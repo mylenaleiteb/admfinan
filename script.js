@@ -3,6 +3,8 @@ const STORAGE = {
   monthly: "pf_monthly_simple_data",
   legacyMonthly: "pf_monthly_data",
   categories: "pf_categories",
+  investments: "pf_investments",
+  remoteCachePrefix: "pf_supabase_cache_",
   theme: "pf_theme"
 };
 
@@ -26,6 +28,16 @@ const emptyState = () => ({
 let state = emptyState();
 let categories = [];
 let categoryChart;
+let investmentAllocationChart;
+let investmentEvolutionChart;
+let investmentState = { assets: [], movements: [], snapshots: [], cdiRates: [], cdiLastSync: "" };
+let cdiSyncMessage = "";
+let supabaseClient = null;
+let currentUser = null;
+let remoteReady = false;
+let isHydratingRemote = false;
+let cloudSaveTimer = null;
+let activeMonthKey = "";
 let pendingConfirm = null;
 
 const $ = (id) => document.getElementById(id);
@@ -90,8 +102,35 @@ const modules = {
   }
 };
 
+const investmentTypes = {
+  fixed_income: { label: "Renda fixa", color: "#1466d8" },
+  stocks: { label: "Ações", color: "#0f8f7f" },
+  real_estate_funds: { label: "Fundos imobiliários", color: "#6d5dfc" },
+  funds: { label: "Fundos", color: "#d98a16" },
+  crypto: { label: "Criptomoedas", color: "#d64545" },
+  pension: { label: "Previdência", color: "#7b4f9d" },
+  other: { label: "Outros", color: "#63717d" }
+};
+
+const movementTypes = {
+  contribution: "Aporte",
+  withdrawal: "Resgate",
+  income: "Provento recebido",
+  fee: "Taxa"
+};
+
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function todayInput() {
+  const date = new Date();
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10);
+}
+
+function validDateInput(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
 }
 
 function loadJSON(key, fallback) {
@@ -135,6 +174,37 @@ function normalizeSupermarketList(list) {
   })) : [];
 }
 
+function normalizeInvestmentState(data) {
+  return {
+    assets: Array.isArray(data?.assets) ? data.assets.map(item => ({
+      id: item.id || uid(),
+      name: String(item.name || "Sem nome"),
+      type: investmentTypes[item.type] ? item.type : "other",
+      institution: String(item.institution || ""),
+      currentValue: Math.max(0, Number(item.currentValue || 0)),
+      yieldMode: item.yieldMode === "cdi" ? "cdi" : "manual",
+      cdiPercentage: Number(item.cdiPercentage) >= 0 ? Number(item.cdiPercentage) : 100,
+      cdiBaseDate: validDateInput(item.cdiBaseDate) ? item.cdiBaseDate : todayInput(),
+      cdiBaseValue: Math.max(0, Number(item.cdiBaseValue ?? item.currentValue ?? 0))
+    })) : [],
+    movements: Array.isArray(data?.movements) ? data.movements.map(item => ({
+      id: item.id || uid(),
+      assetId: String(item.assetId || ""),
+      date: validDateInput(item.date) ? item.date : todayInput(),
+      type: movementTypes[item.type] ? item.type : "contribution",
+      value: Math.max(0, Number(item.value || 0)),
+      note: String(item.note || "")
+    })) : [],
+    snapshots: Array.isArray(data?.snapshots) ? data.snapshots
+      .filter(item => validDateInput(item.date))
+      .map(item => ({ date: item.date, total: Math.max(0, Number(item.total || 0)) })) : [],
+    cdiRates: Array.isArray(data?.cdiRates) ? data.cdiRates
+      .filter(item => validDateInput(item.date) && Number.isFinite(Number(item.value)))
+      .map(item => ({ date: item.date, value: Number(item.value) })) : [],
+    cdiLastSync: String(data?.cdiLastSync || "")
+  };
+}
+
 function migrateLegacyData() {
   const legacy = loadJSON(STORAGE.legacyMonthly, null);
   if (!legacy?.transactions?.length) return emptyState();
@@ -156,26 +226,282 @@ function migrateLegacyData() {
   }, emptyState());
 }
 
-function saveAll() {
-  localStorage.setItem(STORAGE.monthly, JSON.stringify(state));
-  localStorage.setItem(STORAGE.categories, JSON.stringify(categories));
-  localStorage.setItem(STORAGE.month, currentMonthKey());
+function buildAppPayload() {
+  return {
+    version: 2,
+    month: activeMonthKey || currentMonthKey(),
+    monthlyState: state,
+    categories,
+    investments: investmentState,
+    theme: document.body.classList.contains("dark") ? "dark" : "light"
+  };
 }
 
-function init() {
-  ensureCurrentMonth();
+function legacyLocalPayload() {
   categories = loadJSON(STORAGE.categories, defaultCategories);
-  if (!categories.length) categories = defaultCategories;
-
+  if (!categories.length) categories = defaultCategories.map(category => ({ ...category }));
+  const savedMonth = localStorage.getItem(STORAGE.month) || currentMonthKey();
   const saved = loadJSON(STORAGE.monthly, null);
-  state = saved ? normalizeState(saved) : migrateLegacyData();
+  const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
+  return {
+    version: 2,
+    month: savedMonth,
+    monthlyState,
+    categories,
+    investments: normalizeInvestmentState(loadJSON(STORAGE.investments, null)),
+    theme: localStorage.getItem(STORAGE.theme) === "dark" ? "dark" : "light"
+  };
+}
 
+function applyAppPayload(payload) {
+  activeMonthKey = String(payload?.month || currentMonthKey());
+  state = normalizeState(payload?.monthlyState);
+  categories = Array.isArray(payload?.categories) && payload.categories.length
+    ? payload.categories
+    : defaultCategories.map(category => ({ ...category }));
+  investmentState = normalizeInvestmentState(payload?.investments);
+
+  const monthRolled = activeMonthKey !== currentMonthKey();
+  if (monthRolled) {
+    activeMonthKey = currentMonthKey();
+    state = emptyState();
+  }
+
+  document.body.classList.toggle("dark", payload?.theme === "dark");
+  return monthRolled;
+}
+
+function userCacheKey() {
+  return currentUser ? `${STORAGE.remoteCachePrefix}${currentUser.id}` : "";
+}
+
+function loadUserCache() {
+  const key = userCacheKey();
+  if (!key) return null;
+  const saved = loadJSON(key, null);
+  if (!saved) return null;
+  return saved.payload ? saved : { payload: saved, pending: false, savedAt: "" };
+}
+
+function saveUserCache(payload = buildAppPayload(), pending = true) {
+  const key = userCacheKey();
+  if (!key) return;
+  localStorage.setItem(key, JSON.stringify({ payload, pending, savedAt: new Date().toISOString() }));
+}
+
+function setCloudStatus(message, type = "pending") {
+  $("cloudSyncStatus").textContent = message;
+  $("cloudSyncStatus").classList.toggle("synced", type === "synced");
+  $("cloudSyncStatus").classList.toggle("error", type === "error");
+}
+
+function scheduleCloudSave() {
+  if (!remoteReady || !currentUser || !supabaseClient || isHydratingRemote) return;
+  clearTimeout(cloudSaveTimer);
+  setCloudStatus("Alterações pendentes...");
+  cloudSaveTimer = setTimeout(() => saveRemoteNow(), 650);
+}
+
+async function saveRemoteNow() {
+  if (!currentUser || !supabaseClient) return false;
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = null;
+  const payload = buildAppPayload();
+  saveUserCache(payload, true);
+  setCloudStatus("Sincronizando...");
+
+  try {
+    const { error } = await supabaseClient
+      .from("finance_app_state")
+      .upsert({ user_id: currentUser.id, payload, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    if (error) throw error;
+  } catch (error) {
+    console.error(error);
+    setCloudStatus("Não sincronizado", "error");
+    return false;
+  }
+  saveUserCache(payload, false);
+  setCloudStatus("Salvo na nuvem", "synced");
+  return true;
+}
+
+function saveAll() {
+  if (isHydratingRemote) return;
+  saveUserCache(buildAppPayload(), true);
+  scheduleCloudSave();
+}
+
+function clearLegacyAppStorage() {
+  [STORAGE.month, STORAGE.monthly, STORAGE.legacyMonthly, STORAGE.categories, STORAGE.investments]
+    .forEach(key => localStorage.removeItem(key));
+}
+
+async function loadAuthenticatedData() {
+  setCloudStatus("Carregando da nuvem...");
+  const { data, error } = await supabaseClient
+    .from("finance_app_state")
+    .select("payload, updated_at")
+    .eq("user_id", currentUser.id)
+    .maybeSingle();
+
+  isHydratingRemote = true;
+  let importedLegacy = false;
+  let uploadPendingCache = false;
+  let monthRolled = false;
+  const cached = loadUserCache();
+
+  if (error) {
+    console.error(error);
+    monthRolled = applyAppPayload(cached?.payload || legacyLocalPayload());
+    setCloudStatus("Modo local · tente sincronizar", "error");
+  } else if (data?.payload) {
+    if (cached?.pending) {
+      monthRolled = applyAppPayload(cached.payload);
+      uploadPendingCache = true;
+      setCloudStatus("Enviando alterações pendentes...");
+    } else {
+      monthRolled = applyAppPayload(data.payload);
+      saveUserCache(data.payload, false);
+      setCloudStatus("Salvo na nuvem", "synced");
+    }
+  } else {
+    monthRolled = applyAppPayload(cached?.payload || legacyLocalPayload());
+    importedLegacy = true;
+  }
+
+  remoteReady = true;
+  renderAll();
+  isHydratingRemote = false;
+
+  if (!error && (importedLegacy || uploadPendingCache || monthRolled)) {
+    const saved = await saveRemoteNow();
+    if (saved && importedLegacy) {
+      clearLegacyAppStorage();
+      toast("Dados deste navegador migrados para o Supabase.");
+    }
+  }
+}
+
+function setAuthMessage(message, type = "") {
+  $("authMessage").textContent = message;
+  $("authMessage").className = `auth-message ${type}`.trim();
+}
+
+function setAuthBusy(isBusy) {
+  $("signInButton").disabled = isBusy;
+  $("signUpButton").disabled = isBusy;
+  $("authEmail").disabled = isBusy;
+  $("authPassword").disabled = isBusy;
+}
+
+async function startAuthenticatedApp(user) {
+  currentUser = user;
+  remoteReady = false;
+  $("userEmail").textContent = user.email || "Usuário autenticado";
+  $("userSession").hidden = false;
+  setAuthMessage("Carregando seus dados...");
+  await loadAuthenticatedData();
+  $("authScreen").classList.remove("active");
+  setAuthMessage("");
+  refreshCdiRates({ silent: true });
+}
+
+async function signIn(event) {
+  event.preventDefault();
+  setAuthBusy(true);
+  setAuthMessage("Entrando...");
+  const { data, error } = await supabaseClient.auth.signInWithPassword({
+    email: $("authEmail").value.trim(),
+    password: $("authPassword").value
+  });
+  setAuthBusy(false);
+  if (error) {
+    setAuthMessage(authErrorMessage(error), "error");
+    return;
+  }
+  await startAuthenticatedApp(data.user);
+}
+
+async function signUp() {
+  if (!$("authForm").reportValidity()) return;
+  setAuthBusy(true);
+  setAuthMessage("Criando sua conta...");
+  const { data, error } = await supabaseClient.auth.signUp({
+    email: $("authEmail").value.trim(),
+    password: $("authPassword").value
+  });
+  setAuthBusy(false);
+  if (error) {
+    setAuthMessage(authErrorMessage(error), "error");
+    return;
+  }
+  if (data.session && data.user) {
+    await startAuthenticatedApp(data.user);
+  } else {
+    setAuthMessage("Conta criada. Confirme o e-mail recebido e depois entre com sua senha.", "success");
+  }
+}
+
+function authErrorMessage(error) {
+  const message = String(error?.message || "").toLowerCase();
+  if (message.includes("invalid login credentials")) return "E-mail ou senha incorretos.";
+  if (message.includes("email not confirmed")) return "Confirme seu e-mail antes de entrar.";
+  if (message.includes("user already registered")) return "Este e-mail já possui uma conta.";
+  if (message.includes("password")) return "A senha deve ter pelo menos 6 caracteres.";
+  return "Não foi possível concluir o acesso. Tente novamente.";
+}
+
+async function signOut() {
+  await saveRemoteNow();
+  await supabaseClient.auth.signOut();
+  currentUser = null;
+  remoteReady = false;
+  state = emptyState();
+  categories = [];
+  investmentState = normalizeInvestmentState(null);
+  $("userSession").hidden = true;
+  $("authPassword").value = "";
+  $("authScreen").classList.add("active");
+  setAuthMessage("Você saiu da sua conta.", "success");
+}
+
+function bindAuthEvents() {
+  $("authForm").addEventListener("submit", signIn);
+  $("signUpButton").addEventListener("click", signUp);
+  $("signOutButton").addEventListener("click", signOut);
+  $("retryCloudSync").addEventListener("click", saveRemoteNow);
+  window.addEventListener("online", () => saveRemoteNow());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && cloudSaveTimer) saveRemoteNow();
+  });
+}
+
+async function init() {
+  activeMonthKey = currentMonthKey();
   $("currentMonthLabel").textContent = monthName();
+  $("movementDate").value = todayInput();
+  $("movementMonthFilter").value = currentMonthKey();
   if (localStorage.getItem(STORAGE.theme) === "dark") document.body.classList.add("dark");
 
   bindEvents();
-  initEmojiPicker(); // NOVO: inicializa o seletor de emojis
-  renderAll();
+  bindAuthEvents();
+  initEmojiPicker();
+
+  const config = window.SUPABASE_CONFIG;
+  if (!window.supabase?.createClient || !config?.url || !config?.publishableKey) {
+    setAuthMessage("A configuração do Supabase não foi carregada.", "error");
+    setAuthBusy(true);
+    return;
+  }
+
+  supabaseClient = window.supabase.createClient(config.url, config.publishableKey);
+  const { data, error } = await supabaseClient.auth.getSession();
+  if (error) {
+    setAuthMessage("Não foi possível verificar sua sessão.", "error");
+    return;
+  }
+  if (data.session?.user) await startAuthenticatedApp(data.session.user);
+  else setAuthMessage("Entre ou crie uma conta para continuar.");
 }
 
 // ── NOVO: inicializa o emoji-picker-element ──────────────────────────────────
@@ -235,11 +561,23 @@ function bindEvents() {
   $("fixedForm").addEventListener("submit", (event) => saveItem(event, "fixedExpenses"));
   $("variableForm").addEventListener("submit", (event) => saveItem(event, "variableExpenses"));
   $("supermarketForm").addEventListener("submit", saveSupermarketExpense);
+  $("investmentForm").addEventListener("submit", saveInvestment);
+  $("movementForm").addEventListener("submit", saveInvestmentMovement);
+  $("investmentYieldMode").addEventListener("change", renderInvestmentYieldFields);
+  $("refreshCdiRates").addEventListener("click", () => refreshCdiRates());
 
   $("clearIncomeForm").addEventListener("click", () => resetForm("incomes"));
   $("clearFixedForm").addEventListener("click", () => resetForm("fixedExpenses"));
   $("clearVariableForm").addEventListener("click", () => resetForm("variableExpenses"));
   $("clearSupermarketForm").addEventListener("click", resetSupermarketForm);
+  $("clearInvestmentForm").addEventListener("click", resetInvestmentForm);
+  $("clearMovementForm").addEventListener("click", resetMovementForm);
+  $("movementMonthFilter").addEventListener("input", renderMovementHistory);
+  $("movementAssetFilter").addEventListener("change", renderMovementHistory);
+  $("clearMovementFilters").addEventListener("click", clearMovementFilters);
+  $("exportInvestments").addEventListener("click", exportInvestmentBackup);
+  $("importInvestments").addEventListener("click", () => $("investmentBackupFile").click());
+  $("investmentBackupFile").addEventListener("change", importInvestmentBackup);
 
   $("categoryForm").addEventListener("submit", saveCategory);
   $("clearCategoryForm").addEventListener("click", resetCategoryForm);
@@ -255,7 +593,7 @@ function bindEvents() {
   $("closeMonth").addEventListener("click", () => {
     confirmAction(
       "Encerrar mês",
-      "O PDF será gerado e entradas, despesas e rateio serão apagados. As categorias permanecerão salvas.",
+      "O PDF será gerado e entradas, despesas e rateio serão apagados. Categorias, investimentos e movimentações permanecerão salvos.",
       closeMonth
     );
   });
@@ -275,6 +613,7 @@ function openSection(id) {
   $("pageTitle").textContent = label;
   $("sidebar").classList.remove("open");
   if (id === "dashboard") renderCharts();
+  if (id === "investments") renderInvestmentCharts();
 }
 
 function totals() {
@@ -318,6 +657,7 @@ function renderAll() {
   renderCategories();
   renderHouseExpenses();
   renderHouse();
+  renderInvestments();
   renderCharts();
   saveAll();
 }
@@ -328,6 +668,7 @@ function renderDashboard() {
   $("dashExpense").textContent = money(t.expense);
   $("dashBalance").textContent = money(t.balance);
   $("dashFixed").textContent = money(t.fixed);
+  $("dashInvestments").textContent = money(investmentMovementsForMonth(currentMonthKey(), "contribution"));
   renderHouseAnalysis();
   renderExpenseTypePercentages();
 }
@@ -730,6 +1071,554 @@ function renderHouseResult(data) {
   `).join("");
 }
 
+function investmentAssetById(id) {
+  return investmentState.assets.find(asset => asset.id === id);
+}
+
+function investmentMovementTotals(assetId = null) {
+  const movements = investmentState.movements.filter(item => !assetId || item.assetId === assetId);
+  return movements.reduce((totals, item) => {
+    totals[item.type] += Number(item.value || 0);
+    return totals;
+  }, { contribution: 0, withdrawal: 0, income: 0, fee: 0 });
+}
+
+function investmentSummary(assetId = null) {
+  const movementTotals = investmentMovementTotals(assetId);
+  const current = investmentState.assets
+    .filter(asset => !assetId || asset.id === assetId)
+    .reduce((sum, asset) => sum + Number(asset.currentValue || 0), 0);
+  const netContributed = movementTotals.contribution - movementTotals.withdrawal;
+  const result = current + movementTotals.income - netContributed;
+  const percentage = netContributed > 0 ? (result / netContributed) * 100 : 0;
+  return { ...movementTotals, current, netContributed, result, percentage };
+}
+
+function investmentMovementsForMonth(month, type = null) {
+  return investmentState.movements
+    .filter(item => item.date.slice(0, 7) === month && (!type || item.type === type))
+    .reduce((sum, item) => sum + Number(item.value || 0), 0);
+}
+
+function renderInvestments() {
+  const summary = investmentSummary();
+  $("investmentPatrimony").textContent = money(summary.current);
+  $("investmentNetContributed").textContent = money(summary.netContributed);
+  $("investmentResult").textContent = `${money(summary.result)} · ${summary.percentage.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+  $("investmentResult").classList.toggle("negative-value", summary.result < 0);
+  $("investmentIncome").textContent = money(summary.income);
+
+  renderInvestmentSelects();
+  renderInvestmentYieldFields();
+  renderCdiSyncStatus();
+  renderInvestmentTable();
+  renderMovementHistory();
+  renderInvestmentCharts();
+}
+
+function renderInvestmentSelects() {
+  const movementValue = $("movementInvestment").value;
+  const filterValue = $("movementAssetFilter").value;
+  const options = investmentState.assets
+    .map(asset => `<option value="${asset.id}">${escapeHTML(asset.name)}</option>`)
+    .join("");
+
+  $("movementInvestment").innerHTML = options || `<option value="">Cadastre um investimento primeiro</option>`;
+  $("movementInvestment").value = investmentAssetById(movementValue) ? movementValue : (investmentState.assets[0]?.id || "");
+  $("movementAssetFilter").innerHTML = `<option value="">Todos</option>${options}`;
+  $("movementAssetFilter").value = investmentAssetById(filterValue) ? filterValue : "";
+  $("movementForm").querySelector('button[type="submit"]').disabled = !investmentState.assets.length;
+}
+
+function renderInvestmentTable() {
+  const rows = investmentState.assets.map(asset => {
+    const summary = investmentSummary(asset.id);
+    const type = investmentTypes[asset.type] || investmentTypes.other;
+    const resultClass = summary.result < 0 ? "negative-value" : "positive-value";
+    return `<tr>
+      <td><strong>${escapeHTML(asset.name)}</strong></td>
+      <td><span class="category-chip" style="background:${type.color}">${type.label}</span></td>
+      <td>${escapeHTML(asset.institution)}</td>
+      <td>${asset.yieldMode === "cdi" ? `<span class="status cdi-status">${Number(asset.cdiPercentage).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% do CDI</span>` : `<span class="muted">Manual</span>`}</td>
+      <td>${money(summary.netContributed)}</td>
+      <td><strong>${money(summary.current)}</strong></td>
+      <td class="${resultClass}"><strong>${money(summary.result)}</strong> · ${summary.percentage.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</td>
+      <td><div class="actions">
+        <button class="btn secondary small" onclick="editInvestment('${asset.id}')">Atualizar</button>
+        <button class="btn danger small" onclick="deleteInvestment('${asset.id}')">Excluir</button>
+      </div></td>
+    </tr>`;
+  }).join("");
+  const total = investmentSummary();
+
+  $("investmentTable").innerHTML = rows || `<tr><td colspan="8" class="muted">Nenhum investimento cadastrado.</td></tr>`;
+  $("investmentTableNetTotal").textContent = money(total.netContributed);
+  $("investmentTableValueTotal").textContent = money(total.current);
+  $("investmentTableResultTotal").textContent = money(total.result);
+}
+
+function saveInvestment(event) {
+  event.preventDefault();
+  const id = $("investmentId").value || uid();
+  const index = investmentState.assets.findIndex(asset => asset.id === id);
+  const isNew = index < 0;
+  const previous = isNew ? null : investmentState.assets[index];
+  const yieldMode = $("investmentYieldMode").value;
+  const inputValue = Number($("investmentCurrentValue").value || 0);
+  const inputBaseDate = $("investmentBaseDate").value || todayInput();
+  const shouldResetCdiBase = yieldMode === "cdi" && (
+    isNew ||
+    previous?.yieldMode !== "cdi" ||
+    previous?.cdiBaseDate !== inputBaseDate ||
+    Math.abs(Number(previous?.currentValue || 0) - inputValue) > 0.011
+  );
+  const asset = {
+    ...(previous || {}),
+    id,
+    name: $("investmentName").value.trim(),
+    type: $("investmentType").value,
+    institution: $("investmentInstitution").value.trim(),
+    currentValue: inputValue,
+    yieldMode,
+    cdiPercentage: Number($("investmentCdiPercentage").value || 100),
+    cdiBaseDate: shouldResetCdiBase ? inputBaseDate : (previous?.cdiBaseDate || inputBaseDate),
+    cdiBaseValue: shouldResetCdiBase ? inputValue : Number(previous?.cdiBaseValue ?? inputValue)
+  };
+
+  if (isNew) investmentState.assets.push(asset);
+  else investmentState.assets[index] = asset;
+
+  const informedInitialContribution = Number($("investmentInitialContribution").value || 0);
+  const initialContribution = isNew && yieldMode === "cdi" && informedInitialContribution <= 0
+    ? asset.cdiBaseValue
+    : informedInitialContribution;
+  if (isNew && initialContribution > 0) {
+    investmentState.movements.push({
+      id: uid(), assetId: id, date: yieldMode === "cdi" ? asset.cdiBaseDate : todayInput(), type: "contribution", value: initialContribution, note: "Aporte inicial"
+    });
+  }
+
+  if (asset.yieldMode === "cdi") recalculateCdiAsset(asset);
+
+  recordInvestmentSnapshot();
+  resetInvestmentForm();
+  renderAll();
+  if (asset.yieldMode === "cdi") refreshCdiRates({ silent: true });
+  toast(isNew ? "Investimento cadastrado." : (shouldResetCdiBase ? "Saldo-base do investimento atualizado." : "Investimento atualizado."));
+}
+
+function editInvestment(id) {
+  const asset = investmentAssetById(id);
+  if (!asset) return;
+  $("investmentId").value = asset.id;
+  $("investmentName").value = asset.name;
+  $("investmentType").value = asset.type;
+  $("investmentInstitution").value = asset.institution;
+  $("investmentYieldMode").value = asset.yieldMode || "manual";
+  $("investmentCdiPercentage").value = asset.cdiPercentage ?? 100;
+  $("investmentBaseDate").value = asset.cdiBaseDate || todayInput();
+  $("investmentCurrentValue").value = Number(asset.currentValue || 0).toFixed(2);
+  $("investmentInitialContribution").value = "";
+  $("investmentInitialContribution").disabled = true;
+  $("investmentFormTitle").textContent = "Atualizar investimento";
+  renderInvestmentYieldFields();
+  openSection("investments");
+  $("investmentName").focus();
+}
+
+function deleteInvestment(id) {
+  const asset = investmentAssetById(id);
+  if (!asset) return;
+  confirmAction(
+    "Excluir investimento",
+    `O investimento ${asset.name} e todo o histórico ligado a ele serão apagados definitivamente.`,
+    () => {
+      investmentState.assets = investmentState.assets.filter(item => item.id !== id);
+      investmentState.movements = investmentState.movements.filter(item => item.assetId !== id);
+      resetInvestmentForm();
+      resetMovementForm();
+      recordInvestmentSnapshot();
+      renderAll();
+      toast("Investimento excluído.");
+    }
+  );
+}
+
+function resetInvestmentForm() {
+  $("investmentForm").reset();
+  $("investmentId").value = "";
+  $("investmentInitialContribution").disabled = false;
+  $("investmentType").value = "fixed_income";
+  $("investmentYieldMode").value = "manual";
+  $("investmentCdiPercentage").value = "100";
+  $("investmentBaseDate").value = todayInput();
+  $("investmentFormTitle").textContent = "Novo investimento";
+  renderInvestmentYieldFields();
+}
+
+function renderInvestmentYieldFields() {
+  const isCdi = $("investmentYieldMode").value === "cdi";
+  $("investmentCdiPercentageField").hidden = !isCdi;
+  $("investmentBaseDateField").hidden = !isCdi;
+  $("investmentCdiHelp").hidden = !isCdi;
+  $("investmentCdiPercentage").required = isCdi;
+  $("investmentBaseDate").required = isCdi;
+  $("investmentCurrentValueLabel").textContent = isCdi ? "Saldo na data-base" : "Saldo atual";
+  if (isCdi && !$("investmentBaseDate").value) $("investmentBaseDate").value = todayInput();
+}
+
+function movementBalanceEffect(movement) {
+  if (movement.type === "contribution") return Number(movement.value || 0);
+  if (movement.type === "withdrawal" || movement.type === "fee") return -Number(movement.value || 0);
+  return 0;
+}
+
+function applyMovementToBalance(movement, direction = 1) {
+  const asset = investmentAssetById(movement.assetId);
+  if (!asset) return;
+  asset.currentValue = Number(asset.currentValue || 0) + movementBalanceEffect(movement) * direction;
+}
+
+function clampInvestmentBalances() {
+  investmentState.assets.forEach(asset => {
+    asset.currentValue = Math.max(0, Number(asset.currentValue || 0));
+  });
+}
+
+function recalculateCdiAsset(asset) {
+  if (!asset || asset.yieldMode !== "cdi") return Number(asset?.currentValue || 0);
+  const baseDate = validDateInput(asset.cdiBaseDate) ? asset.cdiBaseDate : todayInput();
+  const today = todayInput();
+  const rateByDate = new Map(investmentState.cdiRates
+    .filter(item => item.date > baseDate && item.date <= today)
+    .map(item => [item.date, Number(item.value || 0)]));
+  const movementsByDate = new Map();
+
+  investmentState.movements
+    .filter(item => item.assetId === asset.id && item.date > baseDate && item.date <= today)
+    .forEach(item => {
+      if (!movementsByDate.has(item.date)) movementsByDate.set(item.date, []);
+      movementsByDate.get(item.date).push(item);
+    });
+
+  const dates = [...new Set([...rateByDate.keys(), ...movementsByDate.keys()])].sort();
+  let balance = Math.max(0, Number(asset.cdiBaseValue ?? asset.currentValue ?? 0));
+  let lastRateDate = "";
+
+  dates.forEach(date => {
+    if (rateByDate.has(date)) {
+      const dailyCdi = rateByDate.get(date) / 100;
+      balance *= 1 + dailyCdi * (Number(asset.cdiPercentage || 0) / 100);
+      lastRateDate = date;
+    }
+    (movementsByDate.get(date) || []).forEach(movement => {
+      balance += movementBalanceEffect(movement);
+    });
+    balance = Math.max(0, balance);
+  });
+
+  asset.currentValue = balance;
+  asset.cdiLastRateDate = lastRateDate;
+  return balance;
+}
+
+function recalculateAllCdiAssets() {
+  investmentState.assets.filter(asset => asset.yieldMode === "cdi").forEach(recalculateCdiAsset);
+}
+
+function renderCdiSyncStatus() {
+  const cdiAssets = investmentState.assets.filter(asset => asset.yieldMode === "cdi");
+  const button = $("refreshCdiRates");
+  button.disabled = !cdiAssets.length;
+
+  if (!cdiAssets.length) {
+    $("cdiSyncStatus").textContent = "Nenhum investimento automático cadastrado.";
+    return;
+  }
+  if (cdiSyncMessage) {
+    $("cdiSyncStatus").textContent = cdiSyncMessage;
+    return;
+  }
+
+  const lastRate = [...investmentState.cdiRates].sort((a, b) => b.date.localeCompare(a.date))[0];
+  if (!lastRate) {
+    $("cdiSyncStatus").textContent = "Aguardando a primeira sincronização com o Banco Central.";
+    return;
+  }
+  const rateDate = new Date(`${lastRate.date}T00:00:00`).toLocaleDateString("pt-BR");
+  const syncDate = investmentState.cdiLastSync
+    ? new Date(investmentState.cdiLastSync).toLocaleString("pt-BR")
+    : "não informada";
+  $("cdiSyncStatus").textContent = `CDI disponível até ${rateDate}. Última consulta: ${syncDate}.`;
+}
+
+function bcbDate(value) {
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function addYearsToDate(value, years) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setFullYear(date.getFullYear() + years);
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysToDate(value, days) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+async function refreshCdiRates({ silent = false } = {}) {
+  const cdiAssets = investmentState.assets.filter(asset => asset.yieldMode === "cdi");
+  if (!cdiAssets.length) {
+    cdiSyncMessage = "";
+    renderCdiSyncStatus();
+    return;
+  }
+
+  const button = $("refreshCdiRates");
+  button.disabled = true;
+  cdiSyncMessage = "Consultando as taxas diárias do Banco Central...";
+  renderCdiSyncStatus();
+
+  try {
+    const today = todayInput();
+    const neededStart = cdiAssets.map(asset => asset.cdiBaseDate).filter(validDateInput).sort()[0] || today;
+    const cachedDates = investmentState.cdiRates.map(item => item.date).sort();
+    let periodStart = cachedDates.length && cachedDates[0] <= neededStart
+      ? addDaysToDate(cachedDates[cachedDates.length - 1], 1)
+      : neededStart;
+    const received = [];
+
+    while (periodStart <= today) {
+      const nineYearsLater = addYearsToDate(periodStart, 9);
+      const periodEnd = nineYearsLater < today ? nineYearsLater : today;
+      const url = `https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=${encodeURIComponent(bcbDate(periodStart))}&dataFinal=${encodeURIComponent(bcbDate(periodEnd))}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Banco Central respondeu com status ${response.status}`);
+      const data = await response.json();
+      data.forEach(item => {
+        const [day, month, year] = String(item.data || "").split("/");
+        const value = Number(String(item.valor || "").replace(",", "."));
+        if (year && Number.isFinite(value)) received.push({ date: `${year}-${month}-${day}`, value });
+      });
+      periodStart = addDaysToDate(periodEnd, 1);
+    }
+
+    const merged = new Map(investmentState.cdiRates.map(item => [item.date, item]));
+    received.forEach(item => merged.set(item.date, item));
+    investmentState.cdiRates = [...merged.values()].sort((a, b) => a.date.localeCompare(b.date));
+    investmentState.cdiLastSync = new Date().toISOString();
+    cdiSyncMessage = "";
+    recalculateAllCdiAssets();
+    recordInvestmentSnapshot();
+    renderAll();
+    if (!silent) toast("CDI atualizado e investimentos recalculados.");
+  } catch (error) {
+    console.error(error);
+    cdiSyncMessage = "Não foi possível consultar o Banco Central. Usando as taxas já salvas no navegador.";
+    renderCdiSyncStatus();
+    if (!silent) toast("Não foi possível atualizar o CDI. Verifique a conexão.", "error");
+  } finally {
+    button.disabled = false;
+    renderCdiSyncStatus();
+  }
+}
+
+function saveInvestmentMovement(event) {
+  event.preventDefault();
+  if (!investmentAssetById($("movementInvestment").value)) {
+    toast("Cadastre um investimento antes da movimentação.", "error");
+    return;
+  }
+
+  const id = $("movementId").value || uid();
+  const index = investmentState.movements.findIndex(item => item.id === id);
+  const previous = index >= 0 ? investmentState.movements[index] : null;
+  const previousAsset = previous ? investmentAssetById(previous.assetId) : null;
+  if (previous && previousAsset?.yieldMode !== "cdi") applyMovementToBalance(previous, -1);
+
+  const movement = {
+    id,
+    assetId: $("movementInvestment").value,
+    date: $("movementDate").value,
+    type: $("movementType").value,
+    value: Number($("movementValue").value),
+    note: $("movementNote").value.trim()
+  };
+  const targetAsset = investmentAssetById(movement.assetId);
+  if (targetAsset?.yieldMode !== "cdi" && Number(targetAsset.currentValue || 0) + movementBalanceEffect(movement) < 0) {
+    if (previous && previousAsset?.yieldMode !== "cdi") applyMovementToBalance(previous);
+    clampInvestmentBalances();
+    toast("O valor da saída não pode ser maior que o saldo do investimento.", "error");
+    return;
+  }
+  if (index >= 0) investmentState.movements[index] = movement;
+  else investmentState.movements.push(movement);
+  if (targetAsset.yieldMode === "cdi") recalculateCdiAsset(targetAsset);
+  else applyMovementToBalance(movement);
+  if (previousAsset?.yieldMode === "cdi" && previousAsset.id !== targetAsset.id) recalculateCdiAsset(previousAsset);
+  clampInvestmentBalances();
+
+  recordInvestmentSnapshot();
+  resetMovementForm();
+  renderAll();
+  toast("Movimentação salva e saldo atualizado.");
+}
+
+function renderMovementHistory() {
+  const month = $("movementMonthFilter").value;
+  const assetId = $("movementAssetFilter").value;
+  const movements = [...investmentState.movements]
+    .filter(item => (!month || item.date.slice(0, 7) === month) && (!assetId || item.assetId === assetId))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  $("movementTable").innerHTML = movements.map(item => {
+    const asset = investmentAssetById(item.assetId);
+    return `<tr>
+      <td>${new Date(`${item.date}T00:00:00`).toLocaleDateString("pt-BR")}</td>
+      <td>${escapeHTML(asset?.name || "Investimento removido")}</td>
+      <td><span class="status movement-${item.type}">${movementTypes[item.type]}</span></td>
+      <td><strong>${money(item.value)}</strong></td>
+      <td>${escapeHTML(item.note || "—")}</td>
+      <td><div class="actions">
+        <button class="btn secondary small" onclick="editInvestmentMovement('${item.id}')">Editar</button>
+        <button class="btn danger small" onclick="deleteInvestmentMovement('${item.id}')">Excluir</button>
+      </div></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="6" class="muted">Nenhuma movimentação encontrada para os filtros selecionados.</td></tr>`;
+}
+
+function editInvestmentMovement(id) {
+  const movement = investmentState.movements.find(item => item.id === id);
+  if (!movement) return;
+  $("movementId").value = movement.id;
+  $("movementInvestment").value = movement.assetId;
+  $("movementDate").value = movement.date;
+  $("movementType").value = movement.type;
+  $("movementValue").value = movement.value;
+  $("movementNote").value = movement.note;
+  $("movementFormTitle").textContent = "Editar movimentação";
+  openSection("investments");
+}
+
+function deleteInvestmentMovement(id) {
+  const movement = investmentState.movements.find(item => item.id === id);
+  if (!movement) return;
+  confirmAction("Excluir movimentação", "O registro será removido e o saldo do investimento será recalculado.", () => {
+    const asset = investmentAssetById(movement.assetId);
+    if (asset?.yieldMode !== "cdi") applyMovementToBalance(movement, -1);
+    investmentState.movements = investmentState.movements.filter(item => item.id !== id);
+    if (asset?.yieldMode === "cdi") recalculateCdiAsset(asset);
+    clampInvestmentBalances();
+    recordInvestmentSnapshot();
+    renderAll();
+    toast("Movimentação excluída.");
+  });
+}
+
+function resetMovementForm() {
+  $("movementForm").reset();
+  $("movementId").value = "";
+  $("movementDate").value = todayInput();
+  $("movementType").value = "contribution";
+  $("movementFormTitle").textContent = "Nova movimentação";
+  renderInvestmentSelects();
+}
+
+function clearMovementFilters() {
+  $("movementMonthFilter").value = "";
+  $("movementAssetFilter").value = "";
+  renderMovementHistory();
+}
+
+function recordInvestmentSnapshot() {
+  const snapshot = { date: todayInput(), total: investmentSummary().current };
+  const index = investmentState.snapshots.findIndex(item => item.date === snapshot.date);
+  if (index >= 0) investmentState.snapshots[index] = snapshot;
+  else investmentState.snapshots.push(snapshot);
+  investmentState.snapshots.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function renderInvestmentCharts() {
+  if (!window.Chart) return;
+  const grouped = Object.keys(investmentTypes).map(type => ({
+    type,
+    value: investmentState.assets
+      .filter(asset => asset.type === type)
+      .reduce((sum, asset) => sum + Number(asset.currentValue || 0), 0)
+  })).filter(item => item.value > 0);
+  const snapshots = [...investmentState.snapshots].sort((a, b) => a.date.localeCompare(b.date));
+
+  if (investmentAllocationChart) investmentAllocationChart.destroy();
+  investmentAllocationChart = new Chart($("investmentAllocationChart"), {
+    type: "doughnut",
+    data: {
+      labels: grouped.length ? grouped.map(item => investmentTypes[item.type].label) : ["Sem investimentos"],
+      datasets: [{
+        data: grouped.length ? grouped.map(item => item.value) : [1],
+        backgroundColor: grouped.length ? grouped.map(item => investmentTypes[item.type].color) : ["#dbe7ec"],
+        borderWidth: 0
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+  });
+
+  if (investmentEvolutionChart) investmentEvolutionChart.destroy();
+  investmentEvolutionChart = new Chart($("investmentEvolutionChart"), {
+    type: "line",
+    data: {
+      labels: snapshots.length ? snapshots.map(item => new Date(`${item.date}T00:00:00`).toLocaleDateString("pt-BR")) : ["Sem histórico"],
+      datasets: [{
+        label: "Patrimônio",
+        data: snapshots.length ? snapshots.map(item => item.total) : [0],
+        borderColor: "#1466d8",
+        backgroundColor: "rgba(20, 102, 216, .15)",
+        fill: true,
+        tension: .25
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+  });
+}
+
+function exportInvestmentBackup() {
+  const backup = { version: 1, exportedAt: new Date().toISOString(), investments: investmentState };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `backup-investimentos-${todayInput()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  toast("Backup de investimentos exportado.");
+}
+
+function importInvestmentBackup(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const data = parsed?.investments || parsed;
+      if (!Array.isArray(data?.assets) || !Array.isArray(data?.movements)) throw new Error("Formato inválido");
+      confirmAction("Importar backup", "Os investimentos atuais serão substituídos pelos dados deste arquivo.", () => {
+        investmentState = normalizeInvestmentState(data);
+        resetInvestmentForm();
+        resetMovementForm();
+        renderAll();
+        toast("Backup importado com sucesso.");
+      });
+    } catch {
+      toast("O arquivo selecionado não é um backup válido.", "error");
+    }
+  };
+  reader.readAsText(file);
+}
+
 function renderCharts() {
   if (!window.Chart) return;
 
@@ -759,6 +1648,8 @@ function toggleTheme() {
   document.body.classList.toggle("dark");
   localStorage.setItem(STORAGE.theme, document.body.classList.contains("dark") ? "dark" : "light");
   renderCharts();
+  renderInvestmentCharts();
+  saveAll();
 }
 
 function confirmAction(title, text, callback) {
@@ -803,9 +1694,9 @@ async function closeMonth() {
 
     pdf.save(`relatorio-financeiro-${currentMonthKey()}.pdf`);
     state = emptyState();
-    localStorage.setItem(STORAGE.monthly, JSON.stringify(state));
-    localStorage.setItem(STORAGE.month, currentMonthKey());
+    activeMonthKey = currentMonthKey();
     renderAll();
+    await saveRemoteNow();
     toast("PDF exportado e dados mensais apagados.");
   } catch (error) {
     console.error(error);
@@ -815,6 +1706,7 @@ async function closeMonth() {
 
 function buildPDFReport() {
   const t = totals();
+  const investmentTotals = investmentSummary();
   const categoryRows = expensesByCategory();
   const houseRows = houseResultRows();
   const houseExpensesRows = houseExpenseReportRows();
@@ -840,6 +1732,12 @@ function buildPDFReport() {
 
     <h2>Supermercado</h2>
     ${supermarketReportTable()}
+
+    <h2>Investimentos</h2>
+    <table>
+      <tr><th>Patrimônio atual</th><th>Aportado líquido</th><th>Aportes no mês</th><th>Resultado acumulado</th><th>Proventos</th></tr>
+      <tr><td>${money(investmentTotals.current)}</td><td>${money(investmentTotals.netContributed)}</td><td>${money(investmentMovementsForMonth(currentMonthKey(), "contribution"))}</td><td>${money(investmentTotals.result)}</td><td>${money(investmentTotals.income)}</td></tr>
+    </table>
 
     <h2>Gastos por categoria</h2>
     <table>
@@ -909,5 +1807,12 @@ window.deleteCategory = deleteCategory;
 window.togglePaid = togglePaid;
 window.editSupermarketExpense = editSupermarketExpense;
 window.deleteSupermarketExpense = deleteSupermarketExpense;
+window.editInvestment = editInvestment;
+window.deleteInvestment = deleteInvestment;
+window.editInvestmentMovement = editInvestmentMovement;
+window.deleteInvestmentMovement = deleteInvestmentMovement;
 
-init();
+init().catch(error => {
+  console.error(error);
+  setAuthMessage("Não foi possível iniciar o aplicativo.", "error");
+});
