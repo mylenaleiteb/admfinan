@@ -21,6 +21,7 @@ const emptyState = () => ({
   fixedExpenses: [],
   variableExpenses: [],
   supermarketExpenses: [],
+  appointments: [],
   house: { person1: "", income1: 0, person2: "", income2: 0, total: 0 },
   houseExpenses: { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 }
 });
@@ -156,10 +157,23 @@ function normalizeState(data) {
   next.fixedExpenses = normalizeExpenseList(data?.fixedExpenses);
   next.variableExpenses = normalizeExpenseList(data?.variableExpenses);
   next.supermarketExpenses = normalizeSupermarketList(data?.supermarketExpenses);
+  next.appointments = normalizeAppointmentList(data?.appointments);
   next.house = data?.house || { person1: "", income1: 0, person2: "", income2: 0, total: 0 };
   next.houseExpenses = data?.houseExpenses || { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 };
   next.house.total = sumHouseExpenses(next.houseExpenses) || Number(next.house.total || 0);
   return next;
+}
+
+function normalizeAppointmentList(list) {
+  return Array.isArray(list) ? list
+    .filter(item => validDateInput(item?.date) && String(item?.name || "").trim())
+    .map(item => ({
+      id: item.id || uid(),
+      name: String(item.name).trim().slice(0, 100),
+      date: item.date,
+      time: /^\d{2}:\d{2}$/.test(String(item.time || "")) ? item.time : "",
+      note: String(item.note || "").trim().slice(0, 500)
+    })) : [];
 }
 
 function normalizeExpenseList(list) {
@@ -228,7 +242,7 @@ function migrateLegacyData() {
 
 function buildAppPayload() {
   return {
-    version: 2,
+    version: 3,
     month: activeMonthKey || currentMonthKey(),
     monthlyState: state,
     categories,
@@ -244,7 +258,7 @@ function legacyLocalPayload() {
   const saved = loadJSON(STORAGE.monthly, null);
   const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
   return {
-    version: 2,
+    version: 3,
     month: savedMonth,
     monthlyState,
     categories,
@@ -561,6 +575,25 @@ function bindEvents() {
   $("fixedForm").addEventListener("submit", (event) => saveItem(event, "fixedExpenses"));
   $("variableForm").addEventListener("submit", (event) => saveItem(event, "variableExpenses"));
   $("supermarketForm").addEventListener("submit", saveSupermarketExpense);
+  $("calendarForm").addEventListener("submit", saveAppointment);
+  $("calendarGrid").addEventListener("click", (event) => {
+    const day = event.target.closest("button[data-date]");
+    if (day) openAppointmentModal(day.dataset.date);
+  });
+  $("appointmentDate").addEventListener("change", () => {
+    const date = $("appointmentDate").value;
+    if (!validDateInput(date)) return;
+    updateCalendarModalTitle(date);
+    renderDayAppointments(date);
+  });
+  $("dayAppointments").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-appointment-id]");
+    if (button) deleteAppointment(button.dataset.appointmentId, button.dataset.date);
+  });
+  $("closeCalendarModal").addEventListener("click", closeAppointmentModal);
+  $("calendarModal").addEventListener("click", (event) => {
+    if (event.target === $("calendarModal")) closeAppointmentModal();
+  });
   $("investmentForm").addEventListener("submit", saveInvestment);
   $("movementForm").addEventListener("submit", saveInvestmentMovement);
   $("investmentYieldMode").addEventListener("change", renderInvestmentYieldFields);
@@ -604,6 +637,10 @@ function bindEvents() {
     closeModal();
     if (action) action();
   });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && $("calendarModal").classList.contains("active")) closeAppointmentModal();
+  });
 }
 
 function openSection(id) {
@@ -614,6 +651,7 @@ function openSection(id) {
   $("sidebar").classList.remove("open");
   if (id === "dashboard") renderCharts();
   if (id === "investments") renderInvestmentCharts();
+  if (id === "calendar") renderCalendar();
 }
 
 function totals() {
@@ -654,12 +692,136 @@ function renderAll() {
   renderList("fixedExpenses");
   renderList("variableExpenses");
   renderSupermarketExpenses();
+  renderCalendar();
   renderCategories();
   renderHouseExpenses();
   renderHouse();
   renderInvestments();
   renderCharts();
   saveAll();
+}
+
+function calendarDate(year, month, day) {
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function currentMonthBounds() {
+  const now = new Date();
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return {
+    min: calendarDate(now.getFullYear(), now.getMonth(), 1),
+    max: calendarDate(now.getFullYear(), now.getMonth(), lastDay)
+  };
+}
+
+function appointmentsForDate(date) {
+  return state.appointments
+    .filter(item => item.date === date)
+    .sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99") || a.name.localeCompare(b.name, "pt-BR"));
+}
+
+function renderCalendar() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthKey = currentMonthKey();
+  const monthAppointments = state.appointments.filter(item => item.date.startsWith(monthKey));
+
+  $("calendarMonthTitle").textContent = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(now);
+  $("calendarAppointmentCount").textContent = monthAppointments.length
+    ? `${monthAppointments.length} compromisso${monthAppointments.length === 1 ? "" : "s"} neste mês.`
+    : "Nenhum compromisso cadastrado.";
+
+  const cells = Array.from({ length: firstWeekday }, () => '<div class="calendar-day empty" aria-hidden="true"></div>');
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = calendarDate(year, month, day);
+    const appointments = appointmentsForDate(date);
+    const preview = appointments.slice(0, 3).map(item => `
+      <span class="calendar-event"><b>${item.time || "•"}</b> ${escapeHTML(item.name)}</span>
+    `).join("");
+    const extra = appointments.length > 3 ? `<span class="calendar-more">+${appointments.length - 3} compromisso(s)</span>` : "";
+    cells.push(`
+      <button class="calendar-day${date === todayInput() ? " today" : ""}${appointments.length ? " has-events" : ""}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)">
+        <span class="calendar-day-number">${day}</span>
+        <span class="calendar-events">${preview}${extra}</span>
+      </button>
+    `);
+  }
+  $("calendarGrid").innerHTML = cells.join("");
+}
+
+function openAppointmentModal(date) {
+  const bounds = currentMonthBounds();
+  $("calendarForm").reset();
+  $("appointmentDate").min = bounds.min;
+  $("appointmentDate").max = bounds.max;
+  $("appointmentDate").value = date;
+  updateCalendarModalTitle(date);
+  renderDayAppointments(date);
+  $("calendarModal").classList.add("active");
+  requestAnimationFrame(() => $("appointmentName").focus());
+}
+
+function closeAppointmentModal() {
+  $("calendarModal").classList.remove("active");
+  $("calendarForm").reset();
+}
+
+function updateCalendarModalTitle(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  const label = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" })
+    .format(new Date(year, month - 1, day));
+  $("calendarModalTitle").textContent = `Novo compromisso · ${label}`;
+}
+
+function saveAppointment(event) {
+  event.preventDefault();
+  const name = $("appointmentName").value.trim();
+  const date = $("appointmentDate").value;
+  if (!name || !validDateInput(date)) return;
+  if (!date.startsWith(currentMonthKey())) {
+    toast("Selecione uma data do mês vigente.", "error");
+    return;
+  }
+
+  state.appointments.push({
+    id: uid(),
+    name,
+    date,
+    time: $("appointmentTime").value,
+    note: $("appointmentNote").value.trim()
+  });
+  renderCalendar();
+  saveAll();
+  closeAppointmentModal();
+  toast("Compromisso salvo.");
+}
+
+function renderDayAppointments(date) {
+  const appointments = appointmentsForDate(date);
+  $("dayAppointments").innerHTML = appointments.length ? appointments.map(item => `
+    <article class="day-appointment">
+      <div>
+        <strong>${item.time ? `${item.time} · ` : ""}${escapeHTML(item.name)}</strong>
+        ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
+      </div>
+      <button class="btn danger small" type="button" data-appointment-id="${escapeHTML(item.id)}" data-date="${date}">Excluir</button>
+    </article>
+  `).join("") : '<p class="muted empty-appointments">Nenhum compromisso neste dia.</p>';
+}
+
+function deleteAppointment(id, date) {
+  const appointment = state.appointments.find(item => item.id === id);
+  if (!appointment) return;
+  confirmAction("Excluir compromisso", `Deseja excluir “${appointment.name}”?`, () => {
+    state.appointments = state.appointments.filter(item => item.id !== id);
+    renderCalendar();
+    renderDayAppointments(date);
+    saveAll();
+    toast("Compromisso excluído.");
+  });
 }
 
 function renderDashboard() {
@@ -1693,7 +1855,9 @@ async function closeMonth() {
     }
 
     pdf.save(`relatorio-financeiro-${currentMonthKey()}.pdf`);
+    const appointments = state.appointments;
     state = emptyState();
+    state.appointments = appointments;
     activeMonthKey = currentMonthKey();
     renderAll();
     await saveRemoteNow();
