@@ -737,7 +737,7 @@ function renderCalendar() {
     `).join("");
     const extra = appointments.length > 3 ? `<span class="calendar-more">+${appointments.length - 3} compromisso(s)</span>` : "";
     cells.push(`
-      <button class="calendar-day${date === todayInput() ? " today" : ""}${date < todayInput() ? " past" : ""}${appointments.length ? " has-events" : ""}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)">
+      <button class="calendar-day${date === todayInput() ? " today" : ""}${date < todayInput() ? " past" : ""}${appointments.length ? " has-events" : ""}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)"${date < todayInput() ? " disabled" : ""}>
         <span class="calendar-day-number">${day}</span>
         <span class="calendar-events">${preview}${extra}</span>
       </button>
@@ -747,32 +747,28 @@ function renderCalendar() {
 }
 
 function openAppointmentModal(date) {
+  if (date < todayInput()) return;
   const bounds = currentMonthBounds();
-  const isPast = date < todayInput();
   $("calendarForm").reset();
-  $("calendarForm").hidden = isPast;
-  $("calendarPastNotice").hidden = !isPast;
   $("appointmentDate").min = bounds.min;
   $("appointmentDate").max = bounds.max;
   $("appointmentDate").value = date;
-  updateCalendarModalTitle(date, isPast);
-  renderDayAppointments(date, isPast);
+  updateCalendarModalTitle(date);
+  renderDayAppointments(date);
   $("calendarModal").classList.add("active");
-  if (!isPast) requestAnimationFrame(() => $("appointmentName").focus());
+  requestAnimationFrame(() => $("appointmentName").focus());
 }
 
 function closeAppointmentModal() {
   $("calendarModal").classList.remove("active");
   $("calendarForm").reset();
-  $("calendarForm").hidden = false;
-  $("calendarPastNotice").hidden = true;
 }
 
-function updateCalendarModalTitle(date, isPast = false) {
+function updateCalendarModalTitle(date) {
   const [year, month, day] = date.split("-").map(Number);
   const label = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" })
     .format(new Date(year, month - 1, day));
-  $("calendarModalTitle").textContent = `${isPast ? "Compromissos" : "Novo compromisso"} · ${label}`;
+  $("calendarModalTitle").textContent = `Novo compromisso · ${label}`;
 }
 
 function saveAppointment(event) {
