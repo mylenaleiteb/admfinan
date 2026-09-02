@@ -491,9 +491,10 @@
         <button class="btn secondary small" type="button" id="closeCalendarModal">Fechar</button>
       </div>
       <div class="calendar-modal-content">
+        <p class="calendar-past-notice" id="calendarPastNotice" hidden>Esta data já passou. Os compromissos estão disponíveis somente para consulta.</p>
         <form id="calendarForm" class="form-grid appointment-form">
           <div class="field appointment-name"><label>Nome do compromisso *</label><input id="appointmentName" required maxlength="100" placeholder="Ex: Consulta médica" /></div>
-          <div class="field"><label>Data *</label><input id="appointmentDate" required type="date" /></div>
+          <div class="field"><label>Data *</label><input id="appointmentDate" required type="date" readonly aria-readonly="true" /></div>
           <div class="field"><label>Hora</label><input id="appointmentTime" type="time" /></div>
           <div class="field appointment-note"><label>Observação</label><textarea id="appointmentNote" maxlength="500" rows="3" placeholder="Opcional"></textarea></div>
           <button class="btn appointment-submit" type="submit">💾 Salvar compromisso</button>

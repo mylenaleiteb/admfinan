@@ -580,12 +580,6 @@ function bindEvents() {
     const day = event.target.closest("button[data-date]");
     if (day) openAppointmentModal(day.dataset.date);
   });
-  $("appointmentDate").addEventListener("change", () => {
-    const date = $("appointmentDate").value;
-    if (!validDateInput(date)) return;
-    updateCalendarModalTitle(date);
-    renderDayAppointments(date);
-  });
   $("dayAppointments").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-appointment-id]");
     if (button) deleteAppointment(button.dataset.appointmentId, button.dataset.date);
@@ -743,7 +737,7 @@ function renderCalendar() {
     `).join("");
     const extra = appointments.length > 3 ? `<span class="calendar-more">+${appointments.length - 3} compromisso(s)</span>` : "";
     cells.push(`
-      <button class="calendar-day${date === todayInput() ? " today" : ""}${appointments.length ? " has-events" : ""}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)">
+      <button class="calendar-day${date === todayInput() ? " today" : ""}${date < todayInput() ? " past" : ""}${appointments.length ? " has-events" : ""}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)">
         <span class="calendar-day-number">${day}</span>
         <span class="calendar-events">${preview}${extra}</span>
       </button>
@@ -754,26 +748,31 @@ function renderCalendar() {
 
 function openAppointmentModal(date) {
   const bounds = currentMonthBounds();
+  const isPast = date < todayInput();
   $("calendarForm").reset();
+  $("calendarForm").hidden = isPast;
+  $("calendarPastNotice").hidden = !isPast;
   $("appointmentDate").min = bounds.min;
   $("appointmentDate").max = bounds.max;
   $("appointmentDate").value = date;
-  updateCalendarModalTitle(date);
-  renderDayAppointments(date);
+  updateCalendarModalTitle(date, isPast);
+  renderDayAppointments(date, isPast);
   $("calendarModal").classList.add("active");
-  requestAnimationFrame(() => $("appointmentName").focus());
+  if (!isPast) requestAnimationFrame(() => $("appointmentName").focus());
 }
 
 function closeAppointmentModal() {
   $("calendarModal").classList.remove("active");
   $("calendarForm").reset();
+  $("calendarForm").hidden = false;
+  $("calendarPastNotice").hidden = true;
 }
 
-function updateCalendarModalTitle(date) {
+function updateCalendarModalTitle(date, isPast = false) {
   const [year, month, day] = date.split("-").map(Number);
   const label = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" })
     .format(new Date(year, month - 1, day));
-  $("calendarModalTitle").textContent = `Novo compromisso · ${label}`;
+  $("calendarModalTitle").textContent = `${isPast ? "Compromissos" : "Novo compromisso"} · ${label}`;
 }
 
 function saveAppointment(event) {
@@ -781,6 +780,10 @@ function saveAppointment(event) {
   const name = $("appointmentName").value.trim();
   const date = $("appointmentDate").value;
   if (!name || !validDateInput(date)) return;
+  if (date < todayInput()) {
+    toast("Não é possível adicionar compromissos em uma data que já passou.", "error");
+    return;
+  }
   if (!date.startsWith(currentMonthKey())) {
     toast("Selecione uma data do mês vigente.", "error");
     return;
@@ -799,7 +802,7 @@ function saveAppointment(event) {
   toast("Compromisso salvo.");
 }
 
-function renderDayAppointments(date) {
+function renderDayAppointments(date, readOnly = date < todayInput()) {
   const appointments = appointmentsForDate(date);
   $("dayAppointments").innerHTML = appointments.length ? appointments.map(item => `
     <article class="day-appointment">
@@ -807,7 +810,7 @@ function renderDayAppointments(date) {
         <strong>${item.time ? `${item.time} · ` : ""}${escapeHTML(item.name)}</strong>
         ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
       </div>
-      <button class="btn danger small" type="button" data-appointment-id="${escapeHTML(item.id)}" data-date="${date}">Excluir</button>
+      ${readOnly ? "" : `<button class="btn danger small" type="button" data-appointment-id="${escapeHTML(item.id)}" data-date="${date}">Excluir</button>`}
     </article>
   `).join("") : '<p class="muted empty-appointments">Nenhum compromisso neste dia.</p>';
 }
@@ -815,6 +818,10 @@ function renderDayAppointments(date) {
 function deleteAppointment(id, date) {
   const appointment = state.appointments.find(item => item.id === id);
   if (!appointment) return;
+  if (appointment.date < todayInput()) {
+    toast("Não é possível excluir compromissos de uma data que já passou.", "error");
+    return;
+  }
   confirmAction("Excluir compromisso", `Deseja excluir “${appointment.name}”?`, () => {
     state.appointments = state.appointments.filter(item => item.id !== id);
     renderCalendar();
