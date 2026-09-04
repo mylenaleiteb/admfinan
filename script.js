@@ -22,6 +22,7 @@ const emptyState = () => ({
   variableExpenses: [],
   supermarketExpenses: [],
   appointments: [],
+  holidays: [],
   house: { person1: "", income1: 0, person2: "", income2: 0, total: 0 },
   houseExpenses: { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 }
 });
@@ -158,6 +159,7 @@ function normalizeState(data) {
   next.variableExpenses = normalizeExpenseList(data?.variableExpenses);
   next.supermarketExpenses = normalizeSupermarketList(data?.supermarketExpenses);
   next.appointments = normalizeAppointmentList(data?.appointments);
+  next.holidays = normalizeHolidayList(data?.holidays);
   next.house = data?.house || { person1: "", income1: 0, person2: "", income2: 0, total: 0 };
   next.houseExpenses = data?.houseExpenses || { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 };
   next.house.total = sumHouseExpenses(next.houseExpenses) || Number(next.house.total || 0);
@@ -174,6 +176,13 @@ function normalizeAppointmentList(list) {
       time: /^\d{2}:\d{2}$/.test(String(item.time || "")) ? item.time : "",
       note: String(item.note || "").trim().slice(0, 500)
     })) : [];
+}
+
+function normalizeHolidayList(list) {
+  const holidays = Array.isArray(list) ? list
+    .filter(item => validDateInput(item?.date) && ["national", "local"].includes(item?.type))
+    .map(item => ({ date: item.date, type: item.type })) : [];
+  return [...new Map(holidays.map(item => [item.date, item])).values()];
 }
 
 function normalizeExpenseList(list) {
@@ -576,6 +585,9 @@ function bindEvents() {
   $("variableForm").addEventListener("submit", (event) => saveItem(event, "variableExpenses"));
   $("supermarketForm").addEventListener("submit", saveSupermarketExpense);
   $("calendarForm").addEventListener("submit", saveAppointment);
+  ["nationalHoliday", "localHoliday"].forEach(id => {
+    $(id).addEventListener("change", changeHolidayType);
+  });
   $("calendarGrid").addEventListener("click", (event) => {
     const day = event.target.closest("button[data-date]");
     if (day) openAppointmentModal(day.dataset.date);
@@ -714,6 +726,10 @@ function appointmentsForDate(date) {
     .sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99") || a.name.localeCompare(b.name, "pt-BR"));
 }
 
+function holidayForDate(date) {
+  return state.holidays.find(item => item.date === date);
+}
+
 function renderCalendar() {
   const now = new Date();
   const year = now.getFullYear();
@@ -732,13 +748,17 @@ function renderCalendar() {
   for (let day = 1; day <= daysInMonth; day += 1) {
     const date = calendarDate(year, month, day);
     const appointments = appointmentsForDate(date);
+    const holiday = holidayForDate(date);
+    const holidayClass = holiday ? ` holiday-${holiday.type}` : "";
+    const holidayLabel = holiday?.type === "national" ? "Feriado nacional" : holiday?.type === "local" ? "Feriado local" : "";
     const preview = appointments.slice(0, 3).map(item => `
       <span class="calendar-event"><b>${item.time || "•"}</b> ${escapeHTML(item.name)}</span>
     `).join("");
     const extra = appointments.length > 3 ? `<span class="calendar-more">+${appointments.length - 3} compromisso(s)</span>` : "";
     cells.push(`
-      <button class="calendar-day${date === todayInput() ? " today" : ""}${date < todayInput() ? " past" : ""}${appointments.length ? " has-events" : ""}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)"${date < todayInput() ? " disabled" : ""}>
+      <button class="calendar-day${date === todayInput() ? " today" : ""}${date < todayInput() ? " past" : ""}${appointments.length ? " has-events" : ""}${holidayClass}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)${holidayLabel ? `, ${holidayLabel}` : ""}">
         <span class="calendar-day-number">${day}</span>
+        ${holidayLabel ? `<span class="calendar-holiday-label">${holidayLabel}</span>` : ""}
         <span class="calendar-events">${preview}${extra}</span>
       </button>
     `);
@@ -747,16 +767,39 @@ function renderCalendar() {
 }
 
 function openAppointmentModal(date) {
-  if (date < todayInput()) return;
   const bounds = currentMonthBounds();
   $("calendarForm").reset();
   $("appointmentDate").min = bounds.min;
   $("appointmentDate").max = bounds.max;
   $("appointmentDate").value = date;
+  renderHolidayFlags(date);
   updateCalendarModalTitle(date);
   renderDayAppointments(date);
   $("calendarModal").classList.add("active");
   requestAnimationFrame(() => $("appointmentName").focus());
+}
+
+function renderHolidayFlags(date) {
+  const holiday = holidayForDate(date);
+  $("nationalHoliday").checked = holiday?.type === "national";
+  $("localHoliday").checked = holiday?.type === "local";
+}
+
+function changeHolidayType(event) {
+  const date = $("appointmentDate").value;
+  if (!validDateInput(date)) return;
+
+  const changedType = event.target.id === "nationalHoliday" ? "national" : "local";
+  if (event.target.checked) {
+    $(changedType === "national" ? "localHoliday" : "nationalHoliday").checked = false;
+  }
+
+  state.holidays = state.holidays.filter(item => item.date !== date);
+  if (event.target.checked) state.holidays.push({ date, type: changedType });
+
+  renderCalendar();
+  saveAll();
+  toast(event.target.checked ? "Feriado marcado." : "Marcação de feriado removida.");
 }
 
 function closeAppointmentModal() {
@@ -1859,8 +1902,10 @@ async function closeMonth() {
 
     pdf.save(`relatorio-financeiro-${currentMonthKey()}.pdf`);
     const appointments = state.appointments;
+    const holidays = state.holidays;
     state = emptyState();
     state.appointments = appointments;
+    state.holidays = holidays;
     activeMonthKey = currentMonthKey();
     renderAll();
     await saveRemoteNow();

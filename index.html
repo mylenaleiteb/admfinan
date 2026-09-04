@@ -136,7 +136,10 @@
               <h3 id="calendarMonthTitle">Calendário</h3>
               <span class="muted" id="calendarAppointmentCount">Nenhum compromisso cadastrado.</span>
             </div>
-            <span class="muted">Clique em um dia para adicionar um compromisso.</span>
+            <div class="calendar-help">
+              <span class="muted">Clique em um dia para adicionar um compromisso ou marcar um feriado.</span>
+              <span class="calendar-legend"><i class="national"></i> Nacional <i class="local"></i> Local</span>
+            </div>
           </div>
           <div class="calendar-weekdays" aria-hidden="true">
             <span>Dom</span><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span>
@@ -495,6 +498,12 @@
           <div class="field appointment-name"><label>Nome do compromisso *</label><input id="appointmentName" required maxlength="100" placeholder="Ex: Consulta médica" /></div>
           <div class="field"><label>Data *</label><input id="appointmentDate" required type="date" readonly aria-readonly="true" /></div>
           <div class="field"><label>Hora</label><input id="appointmentTime" type="time" /></div>
+          <fieldset class="holiday-flags">
+            <legend>Classificação do dia</legend>
+            <label><input id="nationalHoliday" type="checkbox" /> Feriado Nacional</label>
+            <label><input id="localHoliday" type="checkbox" /> Feriado Local</label>
+            <small>Marque somente uma opção ou deixe ambas desmarcadas para um dia comum.</small>
+          </fieldset>
           <div class="field appointment-note"><label>Observação</label><textarea id="appointmentNote" maxlength="500" rows="3" placeholder="Opcional"></textarea></div>
           <button class="btn appointment-submit" type="submit">💾 Salvar compromisso</button>
         </form>
