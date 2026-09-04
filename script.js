@@ -23,6 +23,7 @@ const emptyState = () => ({
   supermarketExpenses: [],
   appointments: [],
   holidays: [],
+  menstrualRecords: [],
   house: { person1: "", income1: 0, person2: "", income2: 0, total: 0 },
   houseExpenses: { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 }
 });
@@ -33,6 +34,7 @@ let categoryChart;
 let investmentAllocationChart;
 let investmentEvolutionChart;
 let investmentState = { assets: [], movements: [], snapshots: [], cdiRates: [], cdiLastSync: "" };
+let workState = { salaries: [] };
 let cdiSyncMessage = "";
 let supabaseClient = null;
 let currentUser = null;
@@ -160,6 +162,7 @@ function normalizeState(data) {
   next.supermarketExpenses = normalizeSupermarketList(data?.supermarketExpenses);
   next.appointments = normalizeAppointmentList(data?.appointments);
   next.holidays = normalizeHolidayList(data?.holidays);
+  next.menstrualRecords = normalizeMenstrualRecords(data?.menstrualRecords);
   next.house = data?.house || { person1: "", income1: 0, person2: "", income2: 0, total: 0 };
   next.houseExpenses = data?.houseExpenses || { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 };
   next.house.total = sumHouseExpenses(next.houseExpenses) || Number(next.house.total || 0);
@@ -183,6 +186,19 @@ function normalizeHolidayList(list) {
     .filter(item => validDateInput(item?.date) && ["national", "local"].includes(item?.type))
     .map(item => ({ date: item.date, type: item.type })) : [];
   return [...new Map(holidays.map(item => [item.date, item])).values()];
+}
+
+function normalizeMenstrualRecords(list) {
+  const allowedSymptoms = ["back_pain", "headache"];
+  const records = Array.isArray(list) ? list
+    .filter(item => validDateInput(item?.date))
+    .map(item => ({
+      date: item.date,
+      symptoms: Array.isArray(item.symptoms)
+        ? [...new Set(item.symptoms.filter(symptom => allowedSymptoms.includes(symptom)))]
+        : []
+    })) : [];
+  return [...new Map(records.map(item => [item.date, item])).values()];
 }
 
 function normalizeExpenseList(list) {
@@ -228,6 +244,13 @@ function normalizeInvestmentState(data) {
   };
 }
 
+function normalizeWorkState(data) {
+  const salaries = Array.isArray(data?.salaries) ? data.salaries
+    .filter(item => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(item?.month || "")) && Number.isFinite(Number(item?.value)))
+    .map(item => ({ month: item.month, value: Math.max(0, Number(item.value)) })) : [];
+  return { salaries: [...new Map(salaries.map(item => [item.month, item])).values()] };
+}
+
 function migrateLegacyData() {
   const legacy = loadJSON(STORAGE.legacyMonthly, null);
   if (!legacy?.transactions?.length) return emptyState();
@@ -251,11 +274,12 @@ function migrateLegacyData() {
 
 function buildAppPayload() {
   return {
-    version: 3,
+    version: 4,
     month: activeMonthKey || currentMonthKey(),
     monthlyState: state,
     categories,
     investments: investmentState,
+    work: workState,
     theme: document.body.classList.contains("dark") ? "dark" : "light"
   };
 }
@@ -267,11 +291,12 @@ function legacyLocalPayload() {
   const saved = loadJSON(STORAGE.monthly, null);
   const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
   return {
-    version: 3,
+    version: 4,
     month: savedMonth,
     monthlyState,
     categories,
     investments: normalizeInvestmentState(loadJSON(STORAGE.investments, null)),
+    work: normalizeWorkState(null),
     theme: localStorage.getItem(STORAGE.theme) === "dark" ? "dark" : "light"
   };
 }
@@ -283,6 +308,8 @@ function applyAppPayload(payload) {
     ? payload.categories
     : defaultCategories.map(category => ({ ...category }));
   investmentState = normalizeInvestmentState(payload?.investments);
+  workState = normalizeWorkState(payload?.work);
+  const salaryImported = importSalaryFromEntries(activeMonthKey);
 
   const monthRolled = activeMonthKey !== currentMonthKey();
   if (monthRolled) {
@@ -291,7 +318,7 @@ function applyAppPayload(payload) {
   }
 
   document.body.classList.toggle("dark", payload?.theme === "dark");
-  return monthRolled;
+  return monthRolled || salaryImported;
 }
 
 function userCacheKey() {
@@ -370,25 +397,25 @@ async function loadAuthenticatedData() {
   isHydratingRemote = true;
   let importedLegacy = false;
   let uploadPendingCache = false;
-  let monthRolled = false;
+  let payloadAdjusted = false;
   const cached = loadUserCache();
 
   if (error) {
     console.error(error);
-    monthRolled = applyAppPayload(cached?.payload || legacyLocalPayload());
+    payloadAdjusted = applyAppPayload(cached?.payload || legacyLocalPayload());
     setCloudStatus("Modo local · tente sincronizar", "error");
   } else if (data?.payload) {
     if (cached?.pending) {
-      monthRolled = applyAppPayload(cached.payload);
+      payloadAdjusted = applyAppPayload(cached.payload);
       uploadPendingCache = true;
       setCloudStatus("Enviando alterações pendentes...");
     } else {
-      monthRolled = applyAppPayload(data.payload);
+      payloadAdjusted = applyAppPayload(data.payload);
       saveUserCache(data.payload, false);
       setCloudStatus("Salvo na nuvem", "synced");
     }
   } else {
-    monthRolled = applyAppPayload(cached?.payload || legacyLocalPayload());
+    payloadAdjusted = applyAppPayload(cached?.payload || legacyLocalPayload());
     importedLegacy = true;
   }
 
@@ -396,7 +423,7 @@ async function loadAuthenticatedData() {
   renderAll();
   isHydratingRemote = false;
 
-  if (!error && (importedLegacy || uploadPendingCache || monthRolled)) {
+  if (!error && (importedLegacy || uploadPendingCache || payloadAdjusted)) {
     const saved = await saveRemoteNow();
     if (saved && importedLegacy) {
       clearLegacyAppStorage();
@@ -588,6 +615,10 @@ function bindEvents() {
   ["nationalHoliday", "localHoliday"].forEach(id => {
     $(id).addEventListener("change", changeHolidayType);
   });
+  $("menstruationDay").addEventListener("change", changeMenstruationDay);
+  ["symptomBackPain", "symptomHeadache"].forEach(id => {
+    $(id).addEventListener("change", changeMenstrualSymptoms);
+  });
   $("calendarGrid").addEventListener("click", (event) => {
     const day = event.target.closest("button[data-date]");
     if (day) openAppointmentModal(day.dataset.date);
@@ -617,6 +648,7 @@ function bindEvents() {
   $("exportInvestments").addEventListener("click", exportInvestmentBackup);
   $("importInvestments").addEventListener("click", () => $("investmentBackupFile").click());
   $("investmentBackupFile").addEventListener("change", importInvestmentBackup);
+  $("workYearFilter").addEventListener("change", renderWork);
 
   $("categoryForm").addEventListener("submit", saveCategory);
   $("clearCategoryForm").addEventListener("click", resetCategoryForm);
@@ -658,6 +690,7 @@ function openSection(id) {
   if (id === "dashboard") renderCharts();
   if (id === "investments") renderInvestmentCharts();
   if (id === "calendar") renderCalendar();
+  if (id === "work") renderWork();
 }
 
 function totals() {
@@ -699,6 +732,7 @@ function renderAll() {
   renderList("variableExpenses");
   renderSupermarketExpenses();
   renderCalendar();
+  renderWork();
   renderCategories();
   renderHouseExpenses();
   renderHouse();
@@ -730,6 +764,10 @@ function holidayForDate(date) {
   return state.holidays.find(item => item.date === date);
 }
 
+function menstrualRecordForDate(date) {
+  return state.menstrualRecords.find(item => item.date === date);
+}
+
 function renderCalendar() {
   const now = new Date();
   const year = now.getFullYear();
@@ -749,6 +787,7 @@ function renderCalendar() {
     const date = calendarDate(year, month, day);
     const appointments = appointmentsForDate(date);
     const holiday = holidayForDate(date);
+    const menstrualRecord = menstrualRecordForDate(date);
     const holidayClass = holiday ? ` holiday-${holiday.type}` : "";
     const holidayLabel = holiday?.type === "national" ? "Feriado nacional" : holiday?.type === "local" ? "Feriado local" : "";
     const preview = appointments.slice(0, 3).map(item => `
@@ -756,9 +795,10 @@ function renderCalendar() {
     `).join("");
     const extra = appointments.length > 3 ? `<span class="calendar-more">+${appointments.length - 3} compromisso(s)</span>` : "";
     cells.push(`
-      <button class="calendar-day${date === todayInput() ? " today" : ""}${date < todayInput() ? " past" : ""}${appointments.length ? " has-events" : ""}${holidayClass}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)${holidayLabel ? `, ${holidayLabel}` : ""}">
+      <button class="calendar-day${date === todayInput() ? " today" : ""}${date < todayInput() ? " past" : ""}${appointments.length ? " has-events" : ""}${holidayClass}" type="button" data-date="${date}" aria-label="Dia ${day}, ${appointments.length} compromisso(s)${holidayLabel ? `, ${holidayLabel}` : ""}${menstrualRecord ? ", menstruação registrada" : ""}">
         <span class="calendar-day-number">${day}</span>
         ${holidayLabel ? `<span class="calendar-holiday-label">${holidayLabel}</span>` : ""}
+        ${menstrualRecord ? '<span class="calendar-menstruation-label">● Menstruação</span>' : ""}
         <span class="calendar-events">${preview}${extra}</span>
       </button>
     `);
@@ -773,6 +813,7 @@ function openAppointmentModal(date) {
   $("appointmentDate").max = bounds.max;
   $("appointmentDate").value = date;
   renderHolidayFlags(date);
+  renderMenstrualFlags(date);
   updateCalendarModalTitle(date);
   renderDayAppointments(date);
   $("calendarModal").classList.add("active");
@@ -802,6 +843,42 @@ function changeHolidayType(event) {
   toast(event.target.checked ? "Feriado marcado." : "Marcação de feriado removida.");
 }
 
+function renderMenstrualFlags(date) {
+  const record = menstrualRecordForDate(date);
+  const isMenstruationDay = Boolean(record);
+  $("menstruationDay").checked = isMenstruationDay;
+  $("symptomBackPain").checked = record?.symptoms.includes("back_pain") || false;
+  $("symptomHeadache").checked = record?.symptoms.includes("headache") || false;
+  $("symptomBackPain").disabled = !isMenstruationDay;
+  $("symptomHeadache").disabled = !isMenstruationDay;
+}
+
+function changeMenstruationDay(event) {
+  const date = $("appointmentDate").value;
+  if (!validDateInput(date)) return;
+
+  state.menstrualRecords = state.menstrualRecords.filter(item => item.date !== date);
+  if (event.target.checked) state.menstrualRecords.push({ date, symptoms: [] });
+
+  renderMenstrualFlags(date);
+  renderCalendar();
+  saveAll();
+  toast(event.target.checked ? "Dia de menstruação registrado." : "Registro de menstruação removido.");
+}
+
+function changeMenstrualSymptoms() {
+  const date = $("appointmentDate").value;
+  const record = menstrualRecordForDate(date);
+  if (!record) return;
+
+  record.symptoms = [
+    $("symptomBackPain").checked ? "back_pain" : "",
+    $("symptomHeadache").checked ? "headache" : ""
+  ].filter(Boolean);
+  saveAll();
+  toast("Sintomas atualizados.");
+}
+
 function closeAppointmentModal() {
   $("calendarModal").classList.remove("active");
   $("calendarForm").reset();
@@ -811,7 +888,7 @@ function updateCalendarModalTitle(date) {
   const [year, month, day] = date.split("-").map(Number);
   const label = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" })
     .format(new Date(year, month - 1, day));
-  $("calendarModalTitle").textContent = `Novo compromisso · ${label}`;
+  $("calendarModalTitle").textContent = `Detalhes do dia · ${label}`;
 }
 
 function saveAppointment(event) {
@@ -948,6 +1025,8 @@ function saveItem(event, moduleKey) {
   if (index >= 0) state[config.list][index] = item;
   else state[config.list].push(item);
 
+  if (moduleKey === "incomes") syncCurrentMonthSalary();
+
   resetForm(moduleKey);
   renderAll();
   toast(config.saved);
@@ -1079,9 +1158,72 @@ function deleteItem(moduleKey, id) {
   const config = modules[moduleKey];
   confirmAction("Excluir registro", "Esta ação remove o item do mês vigente.", () => {
     state[config.list] = state[config.list].filter(item => item.id !== id);
+    if (moduleKey === "incomes") syncCurrentMonthSalary();
     renderAll();
     toast(config.deleted);
   });
+}
+
+function isSalaryIncome(item) {
+  return String(item?.name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLocaleLowerCase("pt-BR") === "salario";
+}
+
+function currentSalaryTotal() {
+  return state.incomes
+    .filter(isSalaryIncome)
+    .reduce((sum, item) => sum + Number(item.value || 0), 0);
+}
+
+function setSalaryForMonth(month, value) {
+  workState.salaries = workState.salaries.filter(item => item.month !== month);
+  if (value > 0) workState.salaries.push({ month, value });
+  workState.salaries.sort((a, b) => a.month.localeCompare(b.month));
+}
+
+function syncCurrentMonthSalary() {
+  setSalaryForMonth(currentMonthKey(), currentSalaryTotal());
+}
+
+function importSalaryFromEntries(month) {
+  const salary = currentSalaryTotal();
+  const alreadyRecorded = workState.salaries.some(item => item.month === month);
+  if (salary <= 0 || alreadyRecorded) return false;
+  setSalaryForMonth(month, salary);
+  return true;
+}
+
+function renderWork() {
+  const currentYear = new Date().getFullYear();
+  const selectedBeforeRender = Number($("workYearFilter").value);
+  const years = [...new Set([
+    currentYear,
+    ...workState.salaries.map(item => Number(item.month.slice(0, 4)))
+  ])].sort((a, b) => b - a);
+  const selectedYear = years.includes(selectedBeforeRender) ? selectedBeforeRender : currentYear;
+
+  $("workYearFilter").innerHTML = years
+    .map(year => `<option value="${year}"${year === selectedYear ? " selected" : ""}>${year}</option>`)
+    .join("");
+
+  const salaryByMonth = new Map(workState.salaries
+    .filter(item => Number(item.month.slice(0, 4)) === selectedYear)
+    .map(item => [Number(item.month.slice(5, 7)), item.value]));
+  const monthFormatter = new Intl.DateTimeFormat("pt-BR", { month: "long" });
+  let annualTotal = 0;
+
+  $("workSalaryTable").innerHTML = Array.from({ length: 12 }, (_, index) => {
+    const monthNumber = index + 1;
+    const value = salaryByMonth.get(monthNumber);
+    if (value !== undefined) annualTotal += value;
+    const monthLabel = monthFormatter.format(new Date(selectedYear, index, 1));
+    return `<tr><td class="work-month">${monthLabel}</td><td><strong>${value !== undefined ? money(value) : "—"}</strong></td></tr>`;
+  }).join("");
+
+  $("workAnnualTotal").textContent = money(annualTotal);
 }
 
 function resetForm(moduleKey) {
@@ -1903,9 +2045,11 @@ async function closeMonth() {
     pdf.save(`relatorio-financeiro-${currentMonthKey()}.pdf`);
     const appointments = state.appointments;
     const holidays = state.holidays;
+    const menstrualRecords = state.menstrualRecords;
     state = emptyState();
     state.appointments = appointments;
     state.holidays = holidays;
+    state.menstrualRecords = menstrualRecords;
     activeMonthKey = currentMonthKey();
     renderAll();
     await saveRemoteNow();
@@ -1945,6 +2089,9 @@ function buildPDFReport() {
     <h2>Supermercado</h2>
     ${supermarketReportTable()}
 
+    <h2>Registro menstrual</h2>
+    ${menstrualReportTable()}
+
     <h2>Investimentos</h2>
     <table>
       <tr><th>Patrimônio atual</th><th>Aportado líquido</th><th>Aportes no mês</th><th>Resultado acumulado</th><th>Proventos</th></tr>
@@ -1981,6 +2128,24 @@ function houseExpenseReportRows() {
     { name: "Energia", value: expenses.energy },
     { name: "Internet", value: expenses.internet }
   ];
+}
+
+function menstrualReportTable() {
+  const symptomLabels = {
+    back_pain: "Dor nas costas",
+    headache: "Dor de cabeça"
+  };
+  const records = [...state.menstrualRecords].sort((a, b) => a.date.localeCompare(b.date));
+
+  return `<table>
+    <tr><th>Data</th><th>Sintomas registrados</th></tr>
+    ${records.map(item => {
+      const date = new Date(`${item.date}T00:00:00`).toLocaleDateString("pt-BR");
+      const symptoms = item.symptoms.map(symptom => symptomLabels[symptom]).filter(Boolean).join(", ") || "Nenhum sintoma";
+      return `<tr><td>${date}</td><td>${symptoms}</td></tr>`;
+    }).join("") || '<tr><td colspan="2">Nenhum dia de menstruação registrado.</td></tr>'}
+    <tr><th>Total de dias registrados</th><th>${records.length}</th></tr>
+  </table>`;
 }
 
 function reportTable(list, includePaid = false) {

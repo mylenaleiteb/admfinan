@@ -353,6 +353,10 @@ body.dark .card h3 { color: var(--primary); }
 .compact-head { margin-top: 0; }
 .muted { color: var(--muted); font-size: 10px; }
 
+.work-head > div:first-child { display: grid; gap: 4px; }
+.work-year-field { width: 110px; }
+.work-month { text-transform: capitalize; }
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -838,6 +842,16 @@ body.dark .calendar-day:not(.empty):not(.past):hover { background: #1a3a5a; }
 
 .calendar-day.today .calendar-day-number { color: #fff; background: var(--primary); border-radius: 50%; }
 .calendar-holiday-label { font-size: 9px; font-weight: 700; line-height: 1.15; }
+.calendar-menstruation-label {
+  align-self: flex-start;
+  padding: 2px 4px;
+  color: #8c2547;
+  background: #ffe1eb;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.15;
+}
 .calendar-events { min-width: 0; display: grid; gap: 3px; }
 .calendar-event,
 .calendar-more {
@@ -859,7 +873,8 @@ body.dark .calendar-day:not(.empty):not(.past):hover { background: #1a3a5a; }
 .calendar-modal-head h3 { text-transform: capitalize; }
 .calendar-modal-content { padding: 0 12px 12px; }
 .appointment-form { grid-template-columns: minmax(220px, 2fr) 150px 110px; }
-.holiday-flags {
+.holiday-flags,
+.menstrual-flags {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
@@ -868,10 +883,16 @@ body.dark .calendar-day:not(.empty):not(.past):hover { background: #1a3a5a; }
   padding: 8px 10px;
   border: 1px solid var(--border);
 }
-.holiday-flags legend { padding: 0 4px; font-size: 10px; font-weight: 700; }
-.holiday-flags label { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
-.holiday-flags input { margin: 0; }
-.holiday-flags small { color: var(--muted); font-size: 9px; }
+.holiday-flags legend,
+.menstrual-flags legend { padding: 0 4px; font-size: 10px; font-weight: 700; }
+.holiday-flags label,
+.menstrual-flags label { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
+.holiday-flags input,
+.menstrual-flags input { margin: 0; }
+.holiday-flags small,
+.menstrual-flags small,
+.symptom-label { color: var(--muted); font-size: 9px; }
+.menstrual-flags label:has(input:disabled) { cursor: not-allowed; opacity: .55; }
 .appointment-note { grid-column: 1 / -1; }
 .appointment-submit { justify-self: end; grid-column: 1 / -1; }
 textarea { resize: vertical; padding: 5px; }
@@ -1120,6 +1141,8 @@ body.dark .emoji-trigger {
   .metric { min-height: 80px; }
   .chart-box { height: 240px; }
   .movement-history-head { align-items: stretch; flex-direction: column; }
+  .work-head { align-items: stretch; flex-direction: column; }
+  .work-year-field { width: 100%; }
   .history-filters { display: grid; grid-template-columns: 1fr; }
   .cdi-sync-card { align-items: stretch; flex-direction: column; }
   .calendar-head { align-items: flex-start; flex-direction: column; }

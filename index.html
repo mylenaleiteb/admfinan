@@ -47,6 +47,7 @@
         <button class="active" data-section="dashboard">📊 Dashboard</button>
         <button data-section="calendar">📅 Calendário</button>
         <button data-section="incomes">⬆️ Entradas</button>
+        <button data-section="work">💼 Trabalho</button>
         <button data-section="fixed">📌 Despesas fixas</button>
         <button data-section="variable">🧾 Despesas variáveis</button>
         <button data-section="supermarket">🛒 Supermercado</button>
@@ -314,6 +315,28 @@
         </div>
       </section>
 
+      <section class="section" id="work">
+        <article class="card work-card">
+          <div class="section-head compact-head work-head">
+            <div>
+              <h3>Histórico anual de salários</h3>
+              <span class="muted">Preenchido automaticamente pelas entradas com o nome “Salário”.</span>
+            </div>
+            <div class="field work-year-field">
+              <label for="workYearFilter">Ano</label>
+              <select id="workYearFilter"></select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="simple-table">
+              <thead><tr><th>Mês</th><th>Salário</th></tr></thead>
+              <tbody id="workSalaryTable"></tbody>
+              <tfoot><tr><td>Total anual</td><td id="workAnnualTotal">R$ 0,00</td></tr></tfoot>
+            </table>
+          </div>
+        </article>
+      </section>
+
       <section class="section" id="fixed">
         <article class="card entry-form-card">
           <div class="section-head compact-head">
@@ -490,7 +513,7 @@
   <div class="modal-backdrop" id="calendarModal">
     <div class="modal modal-wide calendar-modal" role="dialog" aria-modal="true" aria-labelledby="calendarModalTitle">
       <div class="section-head compact-head calendar-modal-head">
-        <h3 id="calendarModalTitle">Novo compromisso</h3>
+        <h3 id="calendarModalTitle">Detalhes do dia</h3>
         <button class="btn secondary small" type="button" id="closeCalendarModal">Fechar</button>
       </div>
       <div class="calendar-modal-content">
@@ -503,6 +526,14 @@
             <label><input id="nationalHoliday" type="checkbox" /> Feriado Nacional</label>
             <label><input id="localHoliday" type="checkbox" /> Feriado Local</label>
             <small>Marque somente uma opção ou deixe ambas desmarcadas para um dia comum.</small>
+          </fieldset>
+          <fieldset class="menstrual-flags">
+            <legend>Registro menstrual</legend>
+            <label><input id="menstruationDay" type="checkbox" /> Menstruação</label>
+            <span class="symptom-label">Sintomas:</span>
+            <label><input id="symptomBackPain" type="checkbox" disabled /> Dor nas costas</label>
+            <label><input id="symptomHeadache" type="checkbox" disabled /> Dor de cabeça</label>
+            <small>Os sintomas ficam disponíveis quando o dia é marcado como menstruação.</small>
           </fieldset>
           <div class="field appointment-note"><label>Observação</label><textarea id="appointmentNote" maxlength="500" rows="3" placeholder="Opcional"></textarea></div>
           <button class="btn appointment-submit" type="submit">💾 Salvar compromisso</button>
