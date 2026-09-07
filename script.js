@@ -123,6 +123,20 @@ const movementTypes = {
   fee: "Taxa"
 };
 
+// ADICIONE NOVOS SINTOMAS MENSTRUAIS AQUI.
+// Use um identificador único em "value" e o texto que aparecerá na tela em "label".
+const menstrualSymptoms = [
+  { value: "back_pain", label: "Dor nas costas" },
+  { value: "headache", label: "Dor de cabeça" },
+  { value: "migraine", label: "Enxaqueca" },
+  { value: "nausea", label: "Enjôo" },
+  { value: "insomnia", label: "Insônia" },
+  { value: "humordown", label: "Cansaço" },
+  { value: "tummyache", label: "Cólicas" },
+  { value: "diarrea", label: "Diarreia" },
+  { value: "headache", label: "Dor de cabeça" }
+];
+
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
@@ -189,7 +203,7 @@ function normalizeHolidayList(list) {
 }
 
 function normalizeMenstrualRecords(list) {
-  const allowedSymptoms = ["back_pain", "headache"];
+  const allowedSymptoms = menstrualSymptoms.map(symptom => symptom.value);
   const records = Array.isArray(list) ? list
     .filter(item => validDateInput(item?.date))
     .map(item => ({
@@ -246,9 +260,28 @@ function normalizeInvestmentState(data) {
 
 function normalizeWorkState(data) {
   const salaries = Array.isArray(data?.salaries) ? data.salaries
-    .filter(item => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(item?.month || "")) && Number.isFinite(Number(item?.value)))
-    .map(item => ({ month: item.month, value: Math.max(0, Number(item.value)) })) : [];
-  return { salaries: [...new Map(salaries.map(item => [item.month, item])).values()] };
+    .map(item => {
+      const receiptMonth = validMonthKey(item?.receiptMonth) ? item.receiptMonth : item?.month;
+      if (!validMonthKey(receiptMonth) || !Number.isFinite(Number(item?.value))) return null;
+      return {
+        receiptMonth,
+        competence: validMonthKey(item?.competence) ? item.competence : previousMonthKey(receiptMonth),
+        paymentDate: validDateInput(item?.paymentDate) ? item.paymentDate : `${receiptMonth}-15`,
+        value: Math.max(0, Number(item.value))
+      };
+    })
+    .filter(Boolean) : [];
+  return { salaries: [...new Map(salaries.map(item => [item.receiptMonth, item])).values()] };
+}
+
+function validMonthKey(value) {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || ""));
+}
+
+function previousMonthKey(month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const date = new Date(year, monthNumber - 2, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function migrateLegacyData() {
@@ -274,7 +307,7 @@ function migrateLegacyData() {
 
 function buildAppPayload() {
   return {
-    version: 4,
+    version: 5,
     month: activeMonthKey || currentMonthKey(),
     monthlyState: state,
     categories,
@@ -291,7 +324,7 @@ function legacyLocalPayload() {
   const saved = loadJSON(STORAGE.monthly, null);
   const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
   return {
-    version: 4,
+    version: 5,
     month: savedMonth,
     monthlyState,
     categories,
@@ -308,6 +341,8 @@ function applyAppPayload(payload) {
     ? payload.categories
     : defaultCategories.map(category => ({ ...category }));
   investmentState = normalizeInvestmentState(payload?.investments);
+  const workPayloadMigrated = Array.isArray(payload?.work?.salaries)
+    && payload.work.salaries.some(item => validMonthKey(item?.month) && !validMonthKey(item?.receiptMonth));
   workState = normalizeWorkState(payload?.work);
   const salaryImported = importSalaryFromEntries(activeMonthKey);
 
@@ -318,7 +353,7 @@ function applyAppPayload(payload) {
   }
 
   document.body.classList.toggle("dark", payload?.theme === "dark");
-  return monthRolled || salaryImported;
+  return monthRolled || salaryImported || workPayloadMigrated;
 }
 
 function userCacheKey() {
@@ -533,6 +568,7 @@ async function init() {
   $("movementMonthFilter").value = currentMonthKey();
   if (localStorage.getItem(STORAGE.theme) === "dark") document.body.classList.add("dark");
 
+  renderMenstrualSymptomOptions();
   bindEvents();
   bindAuthEvents();
   initEmojiPicker();
@@ -616,8 +652,8 @@ function bindEvents() {
     $(id).addEventListener("change", changeHolidayType);
   });
   $("menstruationDay").addEventListener("change", changeMenstruationDay);
-  ["symptomBackPain", "symptomHeadache"].forEach(id => {
-    $(id).addEventListener("change", changeMenstrualSymptoms);
+  $("menstrualSymptomOptions").addEventListener("change", (event) => {
+    if (event.target.matches("input[data-menstrual-symptom]")) changeMenstrualSymptoms();
   });
   $("calendarGrid").addEventListener("click", (event) => {
     const day = event.target.closest("button[data-date]");
@@ -649,6 +685,12 @@ function bindEvents() {
   $("importInvestments").addEventListener("click", () => $("investmentBackupFile").click());
   $("investmentBackupFile").addEventListener("change", importInvestmentBackup);
   $("workYearFilter").addEventListener("change", renderWork);
+  $("workSalaryTable").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-work-salary]");
+    if (button) openWorkSalaryEdit(button.dataset.workSalary);
+  });
+  $("workSalaryForm").addEventListener("submit", saveWorkSalaryAdjustment);
+  $("cancelWorkSalaryEdit").addEventListener("click", closeWorkSalaryEdit);
 
   $("categoryForm").addEventListener("submit", saveCategory);
   $("clearCategoryForm").addEventListener("click", resetCategoryForm);
@@ -847,10 +889,19 @@ function renderMenstrualFlags(date) {
   const record = menstrualRecordForDate(date);
   const isMenstruationDay = Boolean(record);
   $("menstruationDay").checked = isMenstruationDay;
-  $("symptomBackPain").checked = record?.symptoms.includes("back_pain") || false;
-  $("symptomHeadache").checked = record?.symptoms.includes("headache") || false;
-  $("symptomBackPain").disabled = !isMenstruationDay;
-  $("symptomHeadache").disabled = !isMenstruationDay;
+  document.querySelectorAll("input[data-menstrual-symptom]").forEach(input => {
+    input.checked = record?.symptoms.includes(input.dataset.menstrualSymptom) || false;
+    input.disabled = !isMenstruationDay;
+  });
+}
+
+function renderMenstrualSymptomOptions() {
+  $("menstrualSymptomOptions").innerHTML = menstrualSymptoms.map(symptom => `
+    <label>
+      <input type="checkbox" data-menstrual-symptom="${escapeHTML(symptom.value)}" disabled />
+      ${escapeHTML(symptom.label)}
+    </label>
+  `).join("");
 }
 
 function changeMenstruationDay(event) {
@@ -871,10 +922,8 @@ function changeMenstrualSymptoms() {
   const record = menstrualRecordForDate(date);
   if (!record) return;
 
-  record.symptoms = [
-    $("symptomBackPain").checked ? "back_pain" : "",
-    $("symptomHeadache").checked ? "headache" : ""
-  ].filter(Boolean);
+  record.symptoms = [...document.querySelectorAll("input[data-menstrual-symptom]:checked")]
+    .map(input => input.dataset.menstrualSymptom);
   saveAll();
   toast("Sintomas atualizados.");
 }
@@ -1178,21 +1227,29 @@ function currentSalaryTotal() {
     .reduce((sum, item) => sum + Number(item.value || 0), 0);
 }
 
-function setSalaryForMonth(month, value) {
-  workState.salaries = workState.salaries.filter(item => item.month !== month);
-  if (value > 0) workState.salaries.push({ month, value });
-  workState.salaries.sort((a, b) => a.month.localeCompare(b.month));
+function setSalaryForReceiptMonth(receiptMonth, value) {
+  const existing = workState.salaries.find(item => item.receiptMonth === receiptMonth);
+  workState.salaries = workState.salaries.filter(item => item.receiptMonth !== receiptMonth);
+  if (value > 0) {
+    workState.salaries.push({
+      receiptMonth,
+      competence: existing?.competence || previousMonthKey(receiptMonth),
+      paymentDate: existing?.paymentDate || `${receiptMonth}-15`,
+      value
+    });
+  }
+  workState.salaries.sort((a, b) => a.receiptMonth.localeCompare(b.receiptMonth));
 }
 
 function syncCurrentMonthSalary() {
-  setSalaryForMonth(currentMonthKey(), currentSalaryTotal());
+  setSalaryForReceiptMonth(currentMonthKey(), currentSalaryTotal());
 }
 
-function importSalaryFromEntries(month) {
+function importSalaryFromEntries(receiptMonth) {
   const salary = currentSalaryTotal();
-  const alreadyRecorded = workState.salaries.some(item => item.month === month);
+  const alreadyRecorded = workState.salaries.some(item => item.receiptMonth === receiptMonth);
   if (salary <= 0 || alreadyRecorded) return false;
-  setSalaryForMonth(month, salary);
+  setSalaryForReceiptMonth(receiptMonth, salary);
   return true;
 }
 
@@ -1201,7 +1258,7 @@ function renderWork() {
   const selectedBeforeRender = Number($("workYearFilter").value);
   const years = [...new Set([
     currentYear,
-    ...workState.salaries.map(item => Number(item.month.slice(0, 4)))
+    ...workState.salaries.map(item => Number(item.competence.slice(0, 4)))
   ])].sort((a, b) => b - a);
   const selectedYear = years.includes(selectedBeforeRender) ? selectedBeforeRender : currentYear;
 
@@ -1210,20 +1267,82 @@ function renderWork() {
     .join("");
 
   const salaryByMonth = new Map(workState.salaries
-    .filter(item => Number(item.month.slice(0, 4)) === selectedYear)
-    .map(item => [Number(item.month.slice(5, 7)), item.value]));
+    .filter(item => Number(item.competence.slice(0, 4)) === selectedYear)
+    .map(item => [Number(item.competence.slice(5, 7)), item]));
   const monthFormatter = new Intl.DateTimeFormat("pt-BR", { month: "long" });
   let annualTotal = 0;
 
   $("workSalaryTable").innerHTML = Array.from({ length: 12 }, (_, index) => {
     const monthNumber = index + 1;
-    const value = salaryByMonth.get(monthNumber);
-    if (value !== undefined) annualTotal += value;
+    const salary = salaryByMonth.get(monthNumber);
+    if (salary) annualTotal += salary.value;
     const monthLabel = monthFormatter.format(new Date(selectedYear, index, 1));
-    return `<tr><td class="work-month">${monthLabel}</td><td><strong>${value !== undefined ? money(value) : "—"}</strong></td></tr>`;
+    const paymentDate = salary
+      ? new Date(`${salary.paymentDate}T00:00:00`).toLocaleDateString("pt-BR")
+      : "—";
+    return `<tr>
+      <td class="work-month">${monthLabel}${salary ? `<small>Ciclo ${workCycleLabel(salary.competence)}</small>` : ""}</td>
+      <td>${paymentDate}</td>
+      <td><strong>${salary ? money(salary.value) : "—"}</strong></td>
+      <td>${salary ? `<button class="btn secondary small" type="button" data-work-salary="${salary.receiptMonth}">Editar</button>` : ""}</td>
+    </tr>`;
   }).join("");
 
   $("workAnnualTotal").textContent = money(annualTotal);
+}
+
+function workCycleLabel(competence) {
+  const [year, month] = competence.split("-").map(Number);
+  const start = new Date(year, month - 1, 15);
+  const end = new Date(year, month, 14);
+  const format = date => date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  return `${format(start)} a ${format(end)}`;
+}
+
+function openWorkSalaryEdit(receiptMonth) {
+  const salary = workState.salaries.find(item => item.receiptMonth === receiptMonth);
+  if (!salary) return;
+  $("workSalaryReceiptMonth").value = salary.receiptMonth;
+  $("workSalaryCompetence").value = salary.competence;
+  $("workSalaryPaymentDate").value = salary.paymentDate;
+  $("workSalaryPaymentDate").min = `${salary.receiptMonth}-01`;
+  const [year, month] = salary.receiptMonth.split("-").map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  $("workSalaryPaymentDate").max = `${salary.receiptMonth}-${String(lastDay).padStart(2, "0")}`;
+  $("workSalaryValue").value = salary.value.toFixed(2);
+  $("workSalaryForm").hidden = false;
+  $("workSalaryCompetence").focus();
+}
+
+function closeWorkSalaryEdit() {
+  $("workSalaryForm").reset();
+  $("workSalaryReceiptMonth").value = "";
+  $("workSalaryForm").hidden = true;
+}
+
+function saveWorkSalaryAdjustment(event) {
+  event.preventDefault();
+  const receiptMonth = $("workSalaryReceiptMonth").value;
+  const competence = $("workSalaryCompetence").value;
+  const paymentDate = $("workSalaryPaymentDate").value;
+  const salary = workState.salaries.find(item => item.receiptMonth === receiptMonth);
+  if (!salary || !validMonthKey(competence) || !validDateInput(paymentDate)) return;
+  if (!paymentDate.startsWith(`${receiptMonth}-`)) {
+    toast("A data de recebimento deve permanecer no mês em que a entrada foi cadastrada.", "error");
+    return;
+  }
+  const competenceInUse = workState.salaries.some(item => item.receiptMonth !== receiptMonth && item.competence === competence);
+  if (competenceInUse) {
+    toast("Já existe um salário registrado para essa competência.", "error");
+    return;
+  }
+
+  salary.competence = competence;
+  salary.paymentDate = paymentDate;
+  closeWorkSalaryEdit();
+  renderWork();
+  saveAll();
+  toast("Competência e data de recebimento atualizadas.");
 }
 
 function resetForm(moduleKey) {
@@ -2131,10 +2250,7 @@ function houseExpenseReportRows() {
 }
 
 function menstrualReportTable() {
-  const symptomLabels = {
-    back_pain: "Dor nas costas",
-    headache: "Dor de cabeça"
-  };
+  const symptomLabels = Object.fromEntries(menstrualSymptoms.map(symptom => [symptom.value, symptom.label]));
   const records = [...state.menstrualRecords].sort((a, b) => a.date.localeCompare(b.date));
 
   return `<table>

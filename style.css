@@ -356,6 +356,10 @@ body.dark .card h3 { color: var(--primary); }
 .work-head > div:first-child { display: grid; gap: 4px; }
 .work-year-field { width: 110px; }
 .work-month { text-transform: capitalize; }
+.work-month small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; text-transform: none; }
+.work-salary-form { margin: 10px 0; padding: 10px; background: var(--surface-2); border: 1px solid var(--border); }
+.work-salary-form[hidden] { display: none; }
+.work-salary-form > .actions { grid-column: 1 / -1; justify-content: flex-end; }
 
 .form-grid {
   display: grid;
@@ -879,16 +883,25 @@ body.dark .calendar-day:not(.empty):not(.past):hover { background: #1a3a5a; }
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 14px;
-  padding: 8px 10px;
+  gap: 10px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
 }
 .holiday-flags legend,
 .menstrual-flags legend { padding: 0 4px; font-size: 10px; font-weight: 700; }
 .holiday-flags label,
-.menstrual-flags label { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
-.holiday-flags input,
-.menstrual-flags input { margin: 0; }
+.menstrual-flags label { display: flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.holiday-flags input[type="checkbox"],
+.menstrual-flags input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-height: 15px;
+  flex: 0 0 15px;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.menstrual-symptom-options { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .holiday-flags small,
 .menstrual-flags small,
 .symptom-label { color: var(--muted); font-size: 9px; }
