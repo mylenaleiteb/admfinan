@@ -772,6 +772,37 @@ body.dark .toast div {
 .chart-box { position: relative; height: 280px; }
 .dashboard-charts { margin-top: 8px; }
 
+.travel-title-card { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 280px) minmax(180px, 280px) 150px auto; align-items: end; gap: 12px; margin-bottom: 12px; }
+.travel-title-copy { display: grid; gap: 4px; align-self: center; }
+.travel-title-copy h3 { text-transform: none; font-size: 15px; }
+.travel-grid { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
+.packing-card .compact-head > div { display: grid; gap: 3px; }
+.packing-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+  margin-top: 14px;
+}
+.packing-group {
+  flex: 0 0 var(--packing-width);
+  max-width: 100%;
+}
+.packing-group > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 7px; border-bottom: 1px solid var(--border); }
+.packing-group > header strong { font-size: 11px; }
+.packing-group-columns { display: grid; grid-template-columns: repeat(var(--packing-columns), 230px); gap: 16px; }
+.packing-group-items { display: grid; gap: 2px; padding-top: 7px; }
+.packing-group-empty { margin: 6px 2px; }
+.packing-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 29px; padding: 4px 2px; }
+.packing-item label { min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 11px; cursor: pointer; }
+.packing-item input[type="checkbox"] { width: 15px; height: 15px; min-height: 15px; flex: 0 0 15px; margin: 0; padding: 0; }
+.packing-item span { overflow-wrap: anywhere; }
+.packing-item.packed span { color: var(--muted); text-decoration: line-through; }
+.travel-empty { margin: 8px 0; }
+.itinerary-form { grid-template-columns: 1.2fr 120px 1fr 1.4fr auto; }
+.itinerary-table-wrap { margin-top: 12px; }
+.itinerary-table-wrap table { min-width: 760px; }
+
 .task-form-card { margin-bottom: 12px; }
 .task-form-card .compact-head > div { display: grid; gap: 4px; }
 .task-form { grid-template-columns: minmax(220px, 2fr) 150px 140px; }
@@ -1106,7 +1137,8 @@ body.dark .person-result strong { color: var(--primary); }
 .house-expenses-table input { max-width: 200px; margin-left: auto; }
 .mobile-menu { display: none; }
 
-#pdfReport {
+#pdfReport,
+#travelPdfReport {
   position: fixed;
   left: -9999px;
   top: 0;
@@ -1117,10 +1149,12 @@ body.dark .person-result strong { color: var(--primary); }
   font-family: Arial, sans-serif;
 }
 
-#pdfReport h1 { margin: 0 0 8px; font-size: 22px; }
-#pdfReport h2 { margin: 20px 0 8px; font-size: 15px; }
-#pdfReport table { min-width: 0; font-size: 10px; }
-#pdfReport th, #pdfReport td { padding: 5px 7px; border: 1px solid #ccc; }
+#pdfReport h1, #travelPdfReport h1 { margin: 0 0 8px; font-size: 22px; }
+#pdfReport h2, #travelPdfReport h2 { margin: 20px 0 8px; font-size: 15px; }
+#travelPdfReport h3 { margin: 12px 0 5px; font-size: 12px; }
+#pdfReport table, #travelPdfReport table { min-width: 0; width: 100%; border-collapse: collapse; font-size: 10px; }
+#pdfReport th, #pdfReport td, #travelPdfReport th, #travelPdfReport td { padding: 5px 7px; border: 1px solid #ccc; }
+.travel-pdf-checklist { display: grid; gap: 5px; padding-left: 0; list-style: none; font-size: 11px; }
 
 /* Emoji picker */
 .emoji-picker-wrap { position: relative; align-self: start; }
@@ -1154,6 +1188,9 @@ body.dark .emoji-trigger {
   .form-grid  { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .investment-form,
   .movement-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .travel-title-card { grid-template-columns: 1fr 1fr; }
+  .travel-title-card .travel-title-copy { grid-column: 1 / -1; }
+  .travel-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
@@ -1183,6 +1220,11 @@ body.dark .emoji-trigger {
   .movement-form,
   .house-result,
   .analysis-grid { grid-template-columns: 1fr; }
+  .travel-title-card { grid-template-columns: 1fr; }
+  .travel-title-card .travel-title-copy { grid-column: auto; }
+  .packing-list { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .packing-group { width: 100%; max-width: none; }
+  .packing-group-columns { grid-template-columns: 1fr; gap: 0; }
   .form-grid.compact.work-overtime-form { grid-template-columns: 1fr; }
 
   .entry-form-card {

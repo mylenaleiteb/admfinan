@@ -47,6 +47,7 @@
         <button class="active" data-section="dashboard">📊 Dashboard</button>
         <button data-section="calendar">📅 Calendário</button>
         <button data-section="tasks">✅ Lista de tarefas</button>
+        <button data-section="travel">✈️ Planejamento de Viagens</button>
         <button data-section="incomes">⬆️ Entradas</button>
         <button data-section="work">💼 Trabalho</button>
         <button data-section="fixed">📌 Despesas fixas</button>
@@ -182,6 +183,53 @@
             <header><span>Feito</span><strong id="taskCount-done">0</strong></header>
             <div class="task-list" id="taskList-done"></div>
           </section>
+        </div>
+      </section>
+
+      <section class="section" id="travel">
+        <article class="card travel-title-card">
+          <div class="travel-title-copy">
+            <h3>✈️ Planejamento de Viagens</h3>
+            <span class="muted">Organize sua mala e monte o itinerário da próxima viagem.</span>
+          </div>
+          <div class="field travel-name-field"><label for="travelName">Nome da viagem</label><input id="travelName" maxlength="100" placeholder="Ex: Férias em Florianópolis" /></div>
+          <div class="field travel-destination-field"><label for="travelDestination">Destino</label><input id="travelDestination" maxlength="160" placeholder="Ex: Florianópolis, SC" /></div>
+          <div class="field travel-date-field"><label for="travelDate">Data da viagem</label><input id="travelDate" type="date" /></div>
+          <button class="btn" type="button" id="exportTravelPdf" title="Exportar o PDF e apagar este planejamento">📄 Exportar PDF e concluir</button>
+        </article>
+
+        <div class="travel-grid">
+          <article class="card packing-card">
+            <div class="section-head compact-head">
+              <div>
+                <h3>Arrumando as malas</h3>
+                <span class="muted">Marque os itens que já separou.</span>
+                <span class="muted" id="packingProgress">0 de 0 separados</span>
+              </div>
+            </div>
+            <div class="packing-list" id="packingList"></div>
+          </article>
+
+          <article class="card itinerary-card">
+            <div class="section-head compact-head">
+              <h3 id="itineraryFormTitle">Adicionar ao itinerário</h3>
+              <button class="btn secondary small" type="button" id="clearItineraryForm">Limpar</button>
+            </div>
+            <form id="itineraryForm" class="form-grid itinerary-form">
+              <input type="hidden" id="itineraryId" />
+              <div class="field"><label for="itineraryActivity">Atividade</label><input id="itineraryActivity" required maxlength="120" placeholder="Ex: Visitar o centro histórico" /></div>
+              <div class="field"><label for="itineraryDate">Data</label><input id="itineraryDate" required type="date" /></div>
+              <div class="field"><label for="itineraryLocation">Local</label><input id="itineraryLocation" required maxlength="160" placeholder="Cidade ou endereço" /></div>
+              <div class="field"><label for="itineraryNotes">Anotações</label><input id="itineraryNotes" maxlength="500" placeholder="Horário, reserva, lembretes..." /></div>
+              <button class="btn" type="submit">💾 Salvar</button>
+            </form>
+            <div class="table-wrap itinerary-table-wrap">
+              <table class="simple-table">
+                <thead><tr><th>Atividade</th><th>Data</th><th>Local</th><th>Anotações</th><th>Ações</th></tr></thead>
+                <tbody id="itineraryTable"></tbody>
+              </table>
+            </div>
+          </article>
         </div>
       </section>
 
@@ -366,7 +414,7 @@
           <form id="workOvertimeForm" class="form-grid compact work-overtime-form">
             <div>
               <strong>Horas extras disponíveis: <span id="workOvertimeCurrent">0 h</span></strong>
-              <span class="muted">Atualize aqui o saldo total de horas que você possui.</span>
+              <span class="muted">Última atualização feita em: <span id="workOvertimeUpdatedAt">—</span></span>
             </div>
             <div class="field"><label for="workOvertimeHours">Quantidade de horas</label><input id="workOvertimeHours" type="number" min="0" step="0.25" required placeholder="Ex: 4,5" /></div>
             <button class="btn" type="submit">💾 Salvar horas</button>
@@ -609,6 +657,7 @@
   </div>
 
   <div id="pdfReport"></div>
+  <div id="travelPdfReport"></div>
 
   <script src="supabase-config.js"></script>
   <script src="script.js"></script>

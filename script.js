@@ -35,7 +35,8 @@ let categoryChart;
 let investmentAllocationChart;
 let investmentEvolutionChart;
 let investmentState = { assets: [], movements: [], snapshots: [], cdiRates: [], cdiLastSync: "" };
-let workState = { salaries: [], overtimeHours: 0 };
+let workState = { salaries: [], overtimeHours: 0, overtimeUpdatedAt: "" };
+let travelState = { name: "", destination: "", travelDate: "", packingSeeded: false, packingItems: [], itinerary: [] };
 let cdiSyncMessage = "";
 let supabaseClient = null;
 let currentUser = null;
@@ -143,6 +144,71 @@ const taskStatuses = {
   doing: "Fazendo",
   done: "Feito"
 };
+
+const packingCategories = {
+  clothes: { label: "Roupas", icon: "👕" },
+  personal: { label: "Cuidado pessoal", icon: "🪥" },
+  electronics: { label: "Eletrônicos", icon: "💻" },
+  other: { label: "Utilitários", icon: "🧳" }
+};
+
+const PACKING_ITEMS_PER_COLUMN = 13;
+
+function defaultPackingItems() {
+  return [
+    //Roupas
+    { id: uid(), text: "Meias", category: "clothes", packed: false },
+    { id: uid(), text: "Camisetas", category: "clothes", packed: false },
+    { id: uid(), text: "Calça jeans", category: "clothes", packed: false },
+    { id: uid(), text: "Calça normal", category: "clothes", packed: false },
+    { id: uid(), text: "Cuequinhas", category: "clothes", packed: false },
+    { id: uid(), text: "Calcinha", category: "clothes", packed: false },
+    { id: uid(), text: "Blusa de frio", category: "clothes", packed: false },
+    { id: uid(), text: "Pijama", category: "clothes", packed: false },
+    { id: uid(), text: "Tênis", category: "clothes", packed: false },
+    { id: uid(), text: "Chinelo", category: "clothes", packed: false },
+    { id: uid(), text: "Sutiã", category: "clothes", packed: false },
+    { id: uid(), text: "Shortinho", category: "clothes", packed: false },
+    { id: uid(), text: "Cinto", category: "clothes", packed: false },
+    { id: uid(), text: "Boné", category: "personal", packed: false },
+
+    //Higiene pessoal
+    { id: uid(), text: "Escova de dentes", category: "personal", packed: false },
+    { id: uid(), text: "Pasta de dente", category: "personal", packed: false },
+    { id: uid(), text: "Remédios", category: "personal", packed: false },
+    { id: uid(), text: "Desodorante", category: "personal", packed: false },
+    { id: uid(), text: "Protetor solar de rosto", category: "personal", packed: false },
+    { id: uid(), text: "Protetor solar de corpo", category: "personal", packed: false },
+    { id: uid(), text: "Óculos de sol", category: "personal", packed: false },
+    { id: uid(), text: "Shampoo", category: "personal", packed: false },
+    { id: uid(), text: "Condicionador", category: "personal", packed: false },
+    { id: uid(), text: "Sabonete", category: "personal", packed: false },
+    { id: uid(), text: "Pente", category: "personal", packed: false },
+    { id: uid(), text: "Finalizador de cabelo", category: "personal", packed: false },
+    { id: uid(), text: "Biquíni", category: "personal", packed: false },
+    { id: uid(), text: "Toalha de banho", category: "personal", packed: false },
+    { id: uid(), text: "Absorventes", category: "personal", packed: false },
+    { id: uid(), text: "Finalizador de cabelo", category: "personal", packed: false },
+    { id: uid(), text: "Perfume", category: "personal", packed: false },
+    { id: uid(), text: "Itens do aparelho", category: "personal", packed: false },
+    { id: uid(), text: "Fio dental", category: "personal", packed: false },
+    { id: uid(), text: "Hidratante", category: "personal", packed: false },
+
+    //Eletrônicos
+    { id: uid(), text: "Carregadores", category: "electronics", packed: false },
+    { id: uid(), text: "Notebook", category: "electronics", packed: false },
+    { id: uid(), text: "Kindle", category: "electronics", packed: false },
+    { id: uid(), text: "Tablet", category: "personal", packed: false },
+    { id: uid(), text: "Fone de ouvido", category: "personal", packed: false },
+
+    //Utilitários
+    { id: uid(), text: "Chaves", category: "other", packed: false },
+    { id: uid(), text: "Documentos físicos", category: "other", packed: false },
+    { id: uid(), text: "Cartões físicos", category: "other", packed: false },
+    { id: uid(), text: "Carteirinha Plano de Saúde", category: "other", packed: false },
+
+  ];
+}
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -312,7 +378,49 @@ function normalizeWorkState(data) {
     : Number(data?.overtimeHours || 0);
   return {
     salaries: [...new Map(salaries.map(item => [item.receiptMonth, item])).values()],
-    overtimeHours: Number.isFinite(overtimeValue) ? Math.max(0, overtimeValue) : 0
+    overtimeHours: Number.isFinite(overtimeValue) ? Math.max(0, overtimeValue) : 0,
+    overtimeUpdatedAt: Number.isFinite(Date.parse(String(data?.overtimeUpdatedAt || "")))
+      ? data.overtimeUpdatedAt
+      : ""
+  };
+}
+
+function normalizeTravelState(data) {
+  const savedPackingItems = Array.isArray(data?.packingItems) ? data.packingItems
+    .filter(item => String(item?.text || "").trim())
+    .map(item => ({
+      id: item.id || uid(),
+      text: String(item.text).trim().slice(0, 120),
+      category: packingCategories[item.category] ? item.category : "other",
+      packed: Boolean(item.packed)
+    })) : [];
+  const availableSavedPackingItems = [...savedPackingItems];
+  const usedPackingIds = new Set();
+  const packingItems = defaultPackingItems().map(defaultItem => {
+    const savedIndex = availableSavedPackingItems.findIndex(item =>
+      item.category === defaultItem.category
+      && item.text.toLocaleLowerCase("pt-BR") === defaultItem.text.toLocaleLowerCase("pt-BR")
+    );
+    const savedItem = savedIndex >= 0 ? availableSavedPackingItems.splice(savedIndex, 1)[0] : null;
+    const savedId = savedItem?.id && !usedPackingIds.has(savedItem.id) ? savedItem.id : defaultItem.id;
+    usedPackingIds.add(savedId);
+    return { ...defaultItem, id: savedId, packed: Boolean(savedItem?.packed) };
+  });
+  return {
+    name: String(data?.name || "").trim().slice(0, 100),
+    destination: String(data?.destination || "").trim().slice(0, 160),
+    travelDate: validDateInput(data?.travelDate) ? data.travelDate : "",
+    packingSeeded: true,
+    packingItems,
+    itinerary: Array.isArray(data?.itinerary) ? data.itinerary
+      .filter(item => String(item?.activity || "").trim())
+      .map(item => ({
+        id: item.id || uid(),
+        activity: String(item.activity).trim().slice(0, 120),
+        date: validDateInput(item.date) ? item.date : "",
+        location: String(item.location || "").trim().slice(0, 160),
+        notes: String(item.notes || "").trim().slice(0, 500)
+      })) : []
   };
 }
 
@@ -349,12 +457,13 @@ function migrateLegacyData() {
 
 function buildAppPayload() {
   return {
-    version: 9,
+    version: 12,
     month: activeMonthKey || currentMonthKey(),
     monthlyState: state,
     categories,
     investments: investmentState,
     work: workState,
+    travel: travelState,
     theme: document.body.classList.contains("dark") ? "dark" : "light"
   };
 }
@@ -366,12 +475,13 @@ function legacyLocalPayload() {
   const saved = loadJSON(STORAGE.monthly, null);
   const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
   return {
-    version: 9,
+    version: 12,
     month: savedMonth,
     monthlyState,
     categories,
     investments: normalizeInvestmentState(loadJSON(STORAGE.investments, null)),
     work: normalizeWorkState(null),
+    travel: normalizeTravelState(null),
     theme: localStorage.getItem(STORAGE.theme) === "dark" ? "dark" : "light"
   };
 }
@@ -387,9 +497,28 @@ function applyAppPayload(payload) {
     && payload.work.salaries.some(item => validMonthKey(item?.month) && !validMonthKey(item?.receiptMonth));
   const overtimePayloadMigrated = Array.isArray(payload?.work?.overtimeHours);
   workState = normalizeWorkState(payload?.work);
+  travelState = normalizeTravelState(payload?.travel);
+  const savedPackingCatalog = Array.isArray(payload?.travel?.packingItems)
+    ? payload.travel.packingItems.map(item => `${item?.category || "other"}\u0000${String(item?.text || "").trim().toLocaleLowerCase("pt-BR")}`)
+    : [];
+  const currentPackingCatalog = travelState.packingItems
+    .map(item => `${item.category}\u0000${item.text.toLocaleLowerCase("pt-BR")}`);
+  const savedPackingIds = Array.isArray(payload?.travel?.packingItems)
+    ? payload.travel.packingItems.map(item => item?.id).filter(Boolean)
+    : [];
+  const travelPackingMigrated = !payload?.travel?.packingSeeded
+    || savedPackingCatalog.length !== currentPackingCatalog.length
+    || currentPackingCatalog.some(key => !savedPackingCatalog.includes(key))
+    || savedPackingIds.length !== savedPackingCatalog.length
+    || new Set(savedPackingIds).size !== savedPackingIds.length;
+  const overtimeDateImported = workState.overtimeHours > 0 && !workState.overtimeUpdatedAt;
+  if (overtimeDateImported) workState.overtimeUpdatedAt = new Date().toISOString();
   const legacyOvertimeHours = Number(payload?.monthlyState?.overtimeHours || 0);
   const overtimeImported = legacyOvertimeHours > 0 && workState.overtimeHours === 0;
-  if (overtimeImported) workState.overtimeHours = legacyOvertimeHours;
+  if (overtimeImported) {
+    workState.overtimeHours = legacyOvertimeHours;
+    workState.overtimeUpdatedAt = new Date().toISOString();
+  }
   const salaryImported = importSalaryFromEntries(activeMonthKey);
 
   const monthRolled = activeMonthKey !== currentMonthKey();
@@ -399,7 +528,7 @@ function applyAppPayload(payload) {
   }
 
   document.body.classList.toggle("dark", payload?.theme === "dark");
-  return monthRolled || salaryImported || workPayloadMigrated || overtimePayloadMigrated || overtimeImported;
+  return monthRolled || salaryImported || workPayloadMigrated || overtimePayloadMigrated || overtimeDateImported || overtimeImported || travelPackingMigrated;
 }
 
 function userCacheKey() {
@@ -717,6 +846,29 @@ function bindEvents() {
   $("clearTaskForm").addEventListener("click", resetTaskForm);
   $("taskBoard").addEventListener("click", handleTaskBoardClick);
   $("taskBoard").addEventListener("change", changeTaskStatus);
+  $("travelName").addEventListener("input", () => {
+    travelState.name = $("travelName").value.slice(0, 100);
+    saveAll();
+  });
+  $("travelDestination").addEventListener("input", () => {
+    travelState.destination = $("travelDestination").value.slice(0, 160);
+    saveAll();
+  });
+  $("travelDate").addEventListener("change", () => {
+    travelState.travelDate = validDateInput($("travelDate").value) ? $("travelDate").value : "";
+    saveAll();
+  });
+  $("packingList").addEventListener("change", togglePackingItem);
+  $("itineraryForm").addEventListener("submit", saveItineraryItem);
+  $("clearItineraryForm").addEventListener("click", resetItineraryForm);
+  $("itineraryTable").addEventListener("click", handleItineraryClick);
+  $("exportTravelPdf").addEventListener("click", () => {
+    confirmAction(
+      "Exportar e concluir viagem",
+      "O PDF será exportado e, após a geração do arquivo, o nome da viagem, a checklist e o itinerário serão apagados.",
+      exportTravelPDF
+    );
+  });
   $("investmentForm").addEventListener("submit", saveInvestment);
   $("movementForm").addEventListener("submit", saveInvestmentMovement);
   $("investmentYieldMode").addEventListener("change", renderInvestmentYieldFields);
@@ -784,6 +936,7 @@ function openSection(id) {
   if (id === "investments") renderInvestmentCharts();
   if (id === "calendar") renderCalendar();
   if (id === "tasks") renderTasks();
+  if (id === "travel") renderTravel();
   if (id === "work") renderWork();
 }
 
@@ -827,6 +980,7 @@ function renderAll() {
   renderSupermarketExpenses();
   renderCalendar();
   renderTasks();
+  renderTravel();
   renderWork();
   renderCategories();
   renderHouseExpenses();
@@ -1175,6 +1329,182 @@ function renderTaskCard(task) {
   </article>`;
 }
 
+function togglePackingItem(event) {
+  const checkbox = event.target.closest("input[data-packing-toggle]");
+  if (!checkbox) return;
+  const item = travelState.packingItems.find(entry => entry.id === checkbox.dataset.packingToggle);
+  if (!item) return;
+  item.packed = checkbox.checked;
+  renderPackingList();
+  saveAll();
+}
+
+function renderPackingList() {
+  const packed = travelState.packingItems.filter(item => item.packed).length;
+  $("packingProgress").textContent = `${packed} de ${travelState.packingItems.length} separados`;
+  const categoriesToShow = Object.keys(packingCategories)
+    .filter(category => category !== "other" || travelState.packingItems.some(item => item.category === "other"));
+  $("packingList").innerHTML = travelState.packingItems.length ? categoriesToShow.map(category => {
+    const config = packingCategories[category];
+    const items = travelState.packingItems.filter(item => item.category === category);
+    const itemColumns = Array.from(
+      { length: Math.max(1, Math.ceil(items.length / PACKING_ITEMS_PER_COLUMN)) },
+      (_, index) => items.slice(index * PACKING_ITEMS_PER_COLUMN, (index + 1) * PACKING_ITEMS_PER_COLUMN)
+    );
+    const groupWidth = (itemColumns.length * 230) + ((itemColumns.length - 1) * 16);
+    return `<section class="packing-group" style="--packing-columns: ${itemColumns.length}; --packing-width: ${groupWidth}px">
+      <header><strong>${config.label}</strong><span>${config.icon}</span></header>
+      <div class="packing-group-columns">
+        ${itemColumns.map(column => `<div class="packing-group-items">${column.map(item => `
+          <div class="packing-item${item.packed ? " packed" : ""}">
+            <label>
+              <input type="checkbox" data-packing-toggle="${escapeHTML(item.id)}"${item.packed ? " checked" : ""} />
+              <span>${escapeHTML(item.text)}</span>
+            </label>
+          </div>`).join("")}</div>`).join("") || '<p class="muted packing-group-empty">Nenhum item.</p>'}
+      </div>
+    </section>`;
+  }).join("") : '<p class="muted travel-empty">Nenhum item adicionado à mala.</p>';
+}
+
+function saveItineraryItem(event) {
+  event.preventDefault();
+  const id = $("itineraryId").value || uid();
+  const item = {
+    id,
+    activity: $("itineraryActivity").value.trim(),
+    date: $("itineraryDate").value,
+    location: $("itineraryLocation").value.trim(),
+    notes: $("itineraryNotes").value.trim()
+  };
+  if (!item.activity || !validDateInput(item.date) || !item.location) return;
+  const index = travelState.itinerary.findIndex(entry => entry.id === id);
+  if (index >= 0) travelState.itinerary[index] = item;
+  else travelState.itinerary.push(item);
+  resetItineraryForm();
+  renderItinerary();
+  saveAll();
+  toast(index >= 0 ? "Atividade atualizada." : "Atividade adicionada ao itinerário.");
+}
+
+function resetItineraryForm() {
+  $("itineraryForm").reset();
+  $("itineraryId").value = "";
+  $("itineraryFormTitle").textContent = "Adicionar ao itinerário";
+}
+
+function editItineraryItem(id) {
+  const item = travelState.itinerary.find(entry => entry.id === id);
+  if (!item) return;
+  $("itineraryId").value = item.id;
+  $("itineraryActivity").value = item.activity;
+  $("itineraryDate").value = item.date;
+  $("itineraryLocation").value = item.location;
+  $("itineraryNotes").value = item.notes;
+  $("itineraryFormTitle").textContent = "Editar atividade";
+  $("itineraryActivity").focus();
+}
+
+function deleteItineraryItem(id) {
+  const item = travelState.itinerary.find(entry => entry.id === id);
+  if (!item) return;
+  confirmAction("Excluir atividade", `Deseja excluir “${item.activity}”?`, () => {
+    travelState.itinerary = travelState.itinerary.filter(entry => entry.id !== id);
+    if ($("itineraryId").value === id) resetItineraryForm();
+    renderItinerary();
+    saveAll();
+    toast("Atividade excluída do itinerário.");
+  });
+}
+
+function handleItineraryClick(event) {
+  const editButton = event.target.closest("button[data-itinerary-edit]");
+  if (editButton) editItineraryItem(editButton.dataset.itineraryEdit);
+  const deleteButton = event.target.closest("button[data-itinerary-delete]");
+  if (deleteButton) deleteItineraryItem(deleteButton.dataset.itineraryDelete);
+}
+
+function renderItinerary() {
+  const items = [...travelState.itinerary].sort((a, b) => a.date.localeCompare(b.date) || a.activity.localeCompare(b.activity, "pt-BR"));
+  $("itineraryTable").innerHTML = items.length ? items.map(item => `<tr>
+    <td><strong>${escapeHTML(item.activity)}</strong></td>
+    <td>${formatDateBR(item.date)}</td>
+    <td>${escapeHTML(item.location)}</td>
+    <td>${item.notes ? escapeHTML(item.notes) : "—"}</td>
+    <td><div class="actions">
+      <button class="btn secondary small" type="button" data-itinerary-edit="${escapeHTML(item.id)}">Editar</button>
+      <button class="btn danger small" type="button" data-itinerary-delete="${escapeHTML(item.id)}">Excluir</button>
+    </div></td>
+  </tr>`).join("") : '<tr><td colspan="5" class="muted">Nenhuma atividade adicionada ao itinerário.</td></tr>';
+}
+
+function renderTravel() {
+  $("travelName").value = travelState.name;
+  $("travelDestination").value = travelState.destination;
+  $("travelDate").value = travelState.travelDate;
+  renderPackingList();
+  renderItinerary();
+}
+
+function buildTravelPDFReport() {
+  const title = travelState.name || "Planejamento de viagem";
+  const itinerary = [...travelState.itinerary].sort((a, b) => a.date.localeCompare(b.date));
+  $("travelPdfReport").innerHTML = `
+    <h1>${escapeHTML(title)}</h1>
+    <p>Planejamento exportado em ${new Date().toLocaleDateString("pt-BR")}</p>
+    <p><strong>Destino:</strong> ${escapeHTML(travelState.destination) || "—"}<br>
+    <strong>Data da viagem:</strong> ${travelState.travelDate ? formatDateBR(travelState.travelDate) : "—"}</p>
+    <h2>Checklist da mala</h2>
+    ${Object.entries(packingCategories).map(([category, config]) => {
+      const items = travelState.packingItems.filter(item => item.category === category);
+      return items.length ? `<h3>${config.icon} ${config.label}</h3><ul class="travel-pdf-checklist">${items.map(item => `<li>${item.packed ? "☑" : "☐"} ${escapeHTML(item.text)}</li>`).join("")}</ul>` : "";
+    }).join("") || "<p>Nenhum item cadastrado.</p>"}
+    <h2>Itinerário</h2>
+    <table>
+      <tr><th>Atividade</th><th>Data</th><th>Local</th><th>Anotações</th></tr>
+      ${itinerary.map(item => `<tr><td>${escapeHTML(item.activity)}</td><td>${formatDateBR(item.date)}</td><td>${escapeHTML(item.location)}</td><td>${escapeHTML(item.notes) || "—"}</td></tr>`).join("") || '<tr><td colspan="4">Nenhuma atividade cadastrada.</td></tr>'}
+    </table>`;
+}
+
+async function exportTravelPDF() {
+  try {
+    if (!window.jspdf || !window.html2canvas) {
+      toast("Bibliotecas de PDF não carregaram. Verifique a internet.", "error");
+      return;
+    }
+    buildTravelPDFReport();
+    const canvas = await html2canvas($("travelPdfReport"), { scale: 2, backgroundColor: "#ffffff" });
+    const imageData = canvas.toDataURL("image/png");
+    const pdf = new window.jspdf.jsPDF("p", "mm", "a4");
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imageHeight = (canvas.height * pageWidth) / canvas.width;
+    let position = 0;
+    let remaining = imageHeight;
+    pdf.addImage(imageData, "PNG", 0, position, pageWidth, imageHeight);
+    remaining -= pageHeight;
+    while (remaining > 0) {
+      position -= pageHeight;
+      pdf.addPage();
+      pdf.addImage(imageData, "PNG", 0, position, pageWidth, imageHeight);
+      remaining -= pageHeight;
+    }
+    const filename = (travelState.name || "planejamento-de-viagem")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+    pdf.save(`${filename || "planejamento-de-viagem"}.pdf`);
+
+    travelState = normalizeTravelState(null);
+    resetItineraryForm();
+    renderTravel();
+    saveAll();
+    if (remoteReady) await saveRemoteNow();
+    toast("PDF exportado e planejamento de viagem concluído.");
+  } catch (error) {
+    console.error(error);
+    toast("Não foi possível exportar o planejamento.", "error");
+  }
+}
+
 function renderDashboard() {
   const t = totals();
   $("dashIncome").textContent = money(t.income);
@@ -1478,6 +1808,9 @@ function formatHours(value) {
 function renderWorkOvertimeInput() {
   $("workOvertimeHours").value = workState.overtimeHours || "";
   $("workOvertimeCurrent").textContent = `${formatHours(workState.overtimeHours)} h`;
+  $("workOvertimeUpdatedAt").textContent = workState.overtimeUpdatedAt
+    ? new Date(workState.overtimeUpdatedAt).toLocaleDateString("pt-BR")
+    : "—";
 }
 
 function saveWorkOvertime(event) {
@@ -1486,6 +1819,7 @@ function saveWorkOvertime(event) {
   if (!Number.isFinite(hours) || hours < 0) return;
 
   workState.overtimeHours = hours;
+  workState.overtimeUpdatedAt = new Date().toISOString();
   renderWork();
   saveAll();
   toast(hours > 0 ? "Horas extras salvas." : "Registro de horas extras removido.");
@@ -2410,8 +2744,8 @@ function buildPDFReport() {
 
     <h2>Trabalho</h2>
     <table>
-      <tr><th>Referência</th><th>Horas extras</th></tr>
-      <tr><td>Saldo no encerramento do mês</td><td>${formatHours(workState.overtimeHours)} h</td></tr>
+      <tr><th>Referência</th><th>Horas extras</th><th>Última atualização</th></tr>
+      <tr><td>Saldo no encerramento do mês</td><td>${formatHours(workState.overtimeHours)} h</td><td>${workState.overtimeUpdatedAt ? new Date(workState.overtimeUpdatedAt).toLocaleDateString("pt-BR") : "—"}</td></tr>
     </table>
 
     <h2>Investimentos</h2>
