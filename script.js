@@ -35,7 +35,7 @@ let categoryChart;
 let investmentAllocationChart;
 let investmentEvolutionChart;
 let investmentState = { assets: [], movements: [], snapshots: [], cdiRates: [], cdiLastSync: "" };
-let workState = { salaries: [] };
+let workState = { salaries: [], overtimeHours: 0 };
 let cdiSyncMessage = "";
 let supabaseClient = null;
 let currentUser = null;
@@ -304,7 +304,16 @@ function normalizeWorkState(data) {
       };
     })
     .filter(Boolean) : [];
-  return { salaries: [...new Map(salaries.map(item => [item.receiptMonth, item])).values()] };
+  const overtimeValue = Array.isArray(data?.overtimeHours)
+    ? data.overtimeHours.reduce((sum, item) => {
+      const hours = Number(item?.hours || 0);
+      return sum + (Number.isFinite(hours) ? Math.max(0, hours) : 0);
+    }, 0)
+    : Number(data?.overtimeHours || 0);
+  return {
+    salaries: [...new Map(salaries.map(item => [item.receiptMonth, item])).values()],
+    overtimeHours: Number.isFinite(overtimeValue) ? Math.max(0, overtimeValue) : 0
+  };
 }
 
 function validMonthKey(value) {
@@ -340,7 +349,7 @@ function migrateLegacyData() {
 
 function buildAppPayload() {
   return {
-    version: 6,
+    version: 9,
     month: activeMonthKey || currentMonthKey(),
     monthlyState: state,
     categories,
@@ -357,7 +366,7 @@ function legacyLocalPayload() {
   const saved = loadJSON(STORAGE.monthly, null);
   const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
   return {
-    version: 6,
+    version: 9,
     month: savedMonth,
     monthlyState,
     categories,
@@ -376,7 +385,11 @@ function applyAppPayload(payload) {
   investmentState = normalizeInvestmentState(payload?.investments);
   const workPayloadMigrated = Array.isArray(payload?.work?.salaries)
     && payload.work.salaries.some(item => validMonthKey(item?.month) && !validMonthKey(item?.receiptMonth));
+  const overtimePayloadMigrated = Array.isArray(payload?.work?.overtimeHours);
   workState = normalizeWorkState(payload?.work);
+  const legacyOvertimeHours = Number(payload?.monthlyState?.overtimeHours || 0);
+  const overtimeImported = legacyOvertimeHours > 0 && workState.overtimeHours === 0;
+  if (overtimeImported) workState.overtimeHours = legacyOvertimeHours;
   const salaryImported = importSalaryFromEntries(activeMonthKey);
 
   const monthRolled = activeMonthKey !== currentMonthKey();
@@ -386,7 +399,7 @@ function applyAppPayload(payload) {
   }
 
   document.body.classList.toggle("dark", payload?.theme === "dark");
-  return monthRolled || salaryImported || workPayloadMigrated;
+  return monthRolled || salaryImported || workPayloadMigrated || overtimePayloadMigrated || overtimeImported;
 }
 
 function userCacheKey() {
@@ -728,6 +741,7 @@ function bindEvents() {
   });
   $("workSalaryForm").addEventListener("submit", saveWorkSalaryAdjustment);
   $("cancelWorkSalaryEdit").addEventListener("click", closeWorkSalaryEdit);
+  $("workOvertimeForm").addEventListener("submit", saveWorkOvertime);
 
   $("categoryForm").addEventListener("submit", saveCategory);
   $("clearCategoryForm").addEventListener("click", resetCategoryForm);
@@ -1454,6 +1468,27 @@ function renderWork() {
   }).join("");
 
   $("workAnnualTotal").textContent = money(annualTotal);
+  renderWorkOvertimeInput();
+}
+
+function formatHours(value) {
+  return Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function renderWorkOvertimeInput() {
+  $("workOvertimeHours").value = workState.overtimeHours || "";
+  $("workOvertimeCurrent").textContent = `${formatHours(workState.overtimeHours)} h`;
+}
+
+function saveWorkOvertime(event) {
+  event.preventDefault();
+  const hours = Number($("workOvertimeHours").value);
+  if (!Number.isFinite(hours) || hours < 0) return;
+
+  workState.overtimeHours = hours;
+  renderWork();
+  saveAll();
+  toast(hours > 0 ? "Horas extras salvas." : "Registro de horas extras removido.");
 }
 
 function workCycleLabel(competence) {
@@ -2372,6 +2407,12 @@ function buildPDFReport() {
 
     <h2>Lista de tarefas</h2>
     ${taskReportTable()}
+
+    <h2>Trabalho</h2>
+    <table>
+      <tr><th>Referência</th><th>Horas extras</th></tr>
+      <tr><td>Saldo no encerramento do mês</td><td>${formatHours(workState.overtimeHours)} h</td></tr>
+    </table>
 
     <h2>Investimentos</h2>
     <table>

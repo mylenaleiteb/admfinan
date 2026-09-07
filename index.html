@@ -363,6 +363,14 @@
               <select id="workYearFilter"></select>
             </div>
           </div>
+          <form id="workOvertimeForm" class="form-grid compact work-overtime-form">
+            <div>
+              <strong>Horas extras disponíveis: <span id="workOvertimeCurrent">0 h</span></strong>
+              <span class="muted">Atualize aqui o saldo total de horas que você possui.</span>
+            </div>
+            <div class="field"><label for="workOvertimeHours">Quantidade de horas</label><input id="workOvertimeHours" type="number" min="0" step="0.25" required placeholder="Ex: 4,5" /></div>
+            <button class="btn" type="submit">💾 Salvar horas</button>
+          </form>
           <form id="workSalaryForm" class="form-grid compact work-salary-form" hidden>
             <input type="hidden" id="workSalaryReceiptMonth" />
             <div class="field"><label for="workSalaryCompetence">Competência</label><input id="workSalaryCompetence" type="month" required /></div>

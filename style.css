@@ -357,6 +357,11 @@ body.dark .card h3 { color: var(--primary); }
 .work-year-field { width: 110px; }
 .work-month { text-transform: capitalize; }
 .work-month small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; text-transform: none; }
+.work-overtime-form { margin: 10px 0; padding: 10px; background: color-mix(in srgb, var(--surface-2) 82%, var(--primary) 18%); border: 1px solid var(--border); }
+.form-grid.compact.work-overtime-form { grid-template-columns: minmax(220px, 1fr) 180px auto; }
+.work-overtime-form > div:first-child { display: grid; align-self: center; gap: 3px; }
+.work-overtime-form > div:first-child strong { color: var(--primary-dark); font-size: 11px; }
+body.dark .work-overtime-form > div:first-child strong { color: var(--primary); }
 .work-salary-form { margin: 10px 0; padding: 10px; background: var(--surface-2); border: 1px solid var(--border); }
 .work-salary-form[hidden] { display: none; }
 .work-salary-form > .actions { grid-column: 1 / -1; justify-content: flex-end; }
@@ -1178,6 +1183,7 @@ body.dark .emoji-trigger {
   .movement-form,
   .house-result,
   .analysis-grid { grid-template-columns: 1fr; }
+  .form-grid.compact.work-overtime-form { grid-template-columns: 1fr; }
 
   .entry-form-card {
     width: 100%;
