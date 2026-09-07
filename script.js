@@ -24,6 +24,7 @@ const emptyState = () => ({
   appointments: [],
   holidays: [],
   menstrualRecords: [],
+  tasks: [],
   house: { person1: "", income1: 0, person2: "", income2: 0, total: 0 },
   houseExpenses: { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 }
 });
@@ -134,8 +135,14 @@ const menstrualSymptoms = [
   { value: "humordown", label: "Cansaço" },
   { value: "tummyache", label: "Cólicas" },
   { value: "diarrea", label: "Diarreia" },
-  { value: "headache", label: "Dor de cabeça" }
+  { value: "emotional", label: "Sensibilidade emocional" }
 ];
+
+const taskStatuses = {
+  todo: "A fazer",
+  doing: "Fazendo",
+  done: "Feito"
+};
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -177,6 +184,7 @@ function normalizeState(data) {
   next.appointments = normalizeAppointmentList(data?.appointments);
   next.holidays = normalizeHolidayList(data?.holidays);
   next.menstrualRecords = normalizeMenstrualRecords(data?.menstrualRecords);
+  next.tasks = normalizeTaskList(data?.tasks);
   next.house = data?.house || { person1: "", income1: 0, person2: "", income2: 0, total: 0 };
   next.houseExpenses = data?.houseExpenses || { rent: 0, condo: 0, gas: 0, energy: 0, internet: 0 };
   next.house.total = sumHouseExpenses(next.houseExpenses) || Number(next.house.total || 0);
@@ -213,6 +221,31 @@ function normalizeMenstrualRecords(list) {
         : []
     })) : [];
   return [...new Map(records.map(item => [item.date, item])).values()];
+}
+
+function normalizeTaskList(list) {
+  return Array.isArray(list) ? list
+    .filter(item => String(item?.title || "").trim())
+    .map(item => {
+      const createdAt = validDateInput(String(item.createdAt || "").slice(0, 10))
+        ? String(item.createdAt).slice(0, 10)
+        : todayInput();
+      const deadlineDays = Number.isInteger(Number(item.deadlineDays)) && Number(item.deadlineDays) > 0
+        ? Number(item.deadlineDays)
+        : null;
+      return {
+        id: item.id || uid(),
+        title: String(item.title).trim().slice(0, 120),
+        description: String(item.description || "").trim().slice(0, 600),
+        status: ["todo", "doing", "done"].includes(item.status) ? item.status : "todo",
+        createdAt,
+        deadlineDays,
+        dueDate: deadlineDays ? addDaysToDate(String(createdAt).slice(0, 10), deadlineDays) : "",
+        completedAt: item.status === "done" && validDateInput(String(item.completedAt || "").slice(0, 10))
+          ? String(item.completedAt).slice(0, 10)
+          : ""
+      };
+    }) : [];
 }
 
 function normalizeExpenseList(list) {
@@ -307,7 +340,7 @@ function migrateLegacyData() {
 
 function buildAppPayload() {
   return {
-    version: 5,
+    version: 6,
     month: activeMonthKey || currentMonthKey(),
     monthlyState: state,
     categories,
@@ -324,7 +357,7 @@ function legacyLocalPayload() {
   const saved = loadJSON(STORAGE.monthly, null);
   const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
   return {
-    version: 5,
+    version: 6,
     month: savedMonth,
     monthlyState,
     categories,
@@ -667,6 +700,10 @@ function bindEvents() {
   $("calendarModal").addEventListener("click", (event) => {
     if (event.target === $("calendarModal")) closeAppointmentModal();
   });
+  $("taskForm").addEventListener("submit", saveTask);
+  $("clearTaskForm").addEventListener("click", resetTaskForm);
+  $("taskBoard").addEventListener("click", handleTaskBoardClick);
+  $("taskBoard").addEventListener("change", changeTaskStatus);
   $("investmentForm").addEventListener("submit", saveInvestment);
   $("movementForm").addEventListener("submit", saveInvestmentMovement);
   $("investmentYieldMode").addEventListener("change", renderInvestmentYieldFields);
@@ -706,7 +743,7 @@ function bindEvents() {
   $("closeMonth").addEventListener("click", () => {
     confirmAction(
       "Encerrar mês",
-      "O PDF será gerado e entradas, despesas e rateio serão apagados. Categorias, investimentos e movimentações permanecerão salvos.",
+      "O PDF será gerado e os dados mensais — entradas, despesas, calendário, tarefas e rateio — serão apagados. Salários históricos, categorias, investimentos e movimentações permanecerão salvos.",
       closeMonth
     );
   });
@@ -732,6 +769,7 @@ function openSection(id) {
   if (id === "dashboard") renderCharts();
   if (id === "investments") renderInvestmentCharts();
   if (id === "calendar") renderCalendar();
+  if (id === "tasks") renderTasks();
   if (id === "work") renderWork();
 }
 
@@ -774,6 +812,7 @@ function renderAll() {
   renderList("variableExpenses");
   renderSupermarketExpenses();
   renderCalendar();
+  renderTasks();
   renderWork();
   renderCategories();
   renderHouseExpenses();
@@ -994,6 +1033,132 @@ function deleteAppointment(id, date) {
     saveAll();
     toast("Compromisso excluído.");
   });
+}
+
+function saveTask(event) {
+  event.preventDefault();
+  const id = $("taskId").value || uid();
+  const index = state.tasks.findIndex(item => item.id === id);
+  const previous = index >= 0 ? state.tasks[index] : null;
+  const deadlineValue = Number($("taskDeadlineDays").value);
+  const deadlineDays = Number.isInteger(deadlineValue) && deadlineValue > 0 ? deadlineValue : null;
+  const status = $("taskStatus").value;
+  const createdAt = previous?.createdAt || todayInput();
+  const item = {
+    id,
+    title: $("taskTitle").value.trim(),
+    description: $("taskDescription").value.trim(),
+    status: taskStatuses[status] ? status : "todo",
+    createdAt,
+    deadlineDays,
+    dueDate: deadlineDays ? addDaysToDate(String(createdAt).slice(0, 10), deadlineDays) : "",
+    completedAt: status === "done" ? (previous?.completedAt || todayInput()) : ""
+  };
+  if (!item.title) return;
+
+  if (index >= 0) state.tasks[index] = item;
+  else state.tasks.push(item);
+  resetTaskForm();
+  renderTasks();
+  saveAll();
+  toast(index >= 0 ? "Tarefa atualizada." : "Tarefa criada.");
+}
+
+function resetTaskForm() {
+  $("taskForm").reset();
+  $("taskId").value = "";
+  $("taskStatus").value = "todo";
+  $("taskFormTitle").textContent = "Nova tarefa";
+}
+
+function editTask(id) {
+  const task = state.tasks.find(item => item.id === id);
+  if (!task) return;
+  $("taskId").value = task.id;
+  $("taskTitle").value = task.title;
+  $("taskDescription").value = task.description;
+  $("taskDeadlineDays").value = task.deadlineDays || "";
+  $("taskStatus").value = task.status;
+  $("taskFormTitle").textContent = "Editar tarefa";
+  $("taskTitle").focus();
+}
+
+function deleteTask(id) {
+  const task = state.tasks.find(item => item.id === id);
+  if (!task) return;
+  confirmAction("Excluir tarefa", `Deseja excluir “${task.title}”?`, () => {
+    state.tasks = state.tasks.filter(item => item.id !== id);
+    if ($("taskId").value === id) resetTaskForm();
+    renderTasks();
+    saveAll();
+    toast("Tarefa excluída.");
+  });
+}
+
+function handleTaskBoardClick(event) {
+  const editButton = event.target.closest("button[data-task-edit]");
+  if (editButton) editTask(editButton.dataset.taskEdit);
+  const deleteButton = event.target.closest("button[data-task-delete]");
+  if (deleteButton) deleteTask(deleteButton.dataset.taskDelete);
+}
+
+function changeTaskStatus(event) {
+  const select = event.target.closest("select[data-task-status]");
+  if (!select) return;
+  const task = state.tasks.find(item => item.id === select.dataset.taskStatus);
+  if (!task || !taskStatuses[select.value]) return;
+  task.status = select.value;
+  task.completedAt = task.status === "done" ? (task.completedAt || todayInput()) : "";
+  renderTasks();
+  saveAll();
+  toast(`Tarefa movida para “${taskStatuses[task.status]}”.`);
+}
+
+function isTaskOverdue(task) {
+  return task.status !== "done" && validDateInput(task.dueDate) && task.dueDate < todayInput();
+}
+
+function formatDateBR(value) {
+  if (!validDateInput(String(value || "").slice(0, 10))) return "—";
+  const [year, month, day] = String(value).slice(0, 10).split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function renderTasks() {
+  Object.keys(taskStatuses).forEach(status => {
+    const tasks = state.tasks
+      .filter(item => item.status === status)
+      .sort((a, b) => Number(isTaskOverdue(b)) - Number(isTaskOverdue(a)) || a.createdAt.localeCompare(b.createdAt));
+    $(`taskCount-${status}`).textContent = tasks.length;
+    $(`taskList-${status}`).innerHTML = tasks.length ? tasks.map(task => renderTaskCard(task)).join("")
+      : '<p class="task-column-empty">Nenhuma tarefa.</p>';
+  });
+}
+
+function renderTaskCard(task) {
+  const overdue = isTaskOverdue(task);
+  const dueText = task.deadlineDays
+    ? `${overdue ? "Prazo vencido" : "Prazo"}: ${formatDateBR(task.dueDate)} · ${task.deadlineDays} dia${task.deadlineDays === 1 ? "" : "s"}`
+    : "Sem prazo definido";
+  return `<article class="task-card task-${task.status}${overdue ? " task-overdue" : ""}">
+    <div class="task-card-head">
+      <strong>${escapeHTML(task.title)}</strong>
+      ${overdue ? '<span class="task-overdue-badge">Atrasada</span>' : ""}
+    </div>
+    ${task.description ? `<p>${escapeHTML(task.description)}</p>` : ""}
+    <div class="task-dates">
+      <span>Criada em ${formatDateBR(task.createdAt)}</span>
+      <span>${dueText}</span>
+      ${task.completedAt ? `<span>Concluída em ${formatDateBR(task.completedAt)}</span>` : ""}
+    </div>
+    <div class="task-card-actions">
+      <select data-task-status="${escapeHTML(task.id)}" aria-label="Status da tarefa ${escapeHTML(task.title)}">
+        ${Object.entries(taskStatuses).map(([value, label]) => `<option value="${value}"${task.status === value ? " selected" : ""}>${label}</option>`).join("")}
+      </select>
+      <button class="btn secondary small" type="button" data-task-edit="${escapeHTML(task.id)}">Editar</button>
+      <button class="btn danger small" type="button" data-task-delete="${escapeHTML(task.id)}">Excluir</button>
+    </div>
+  </article>`;
 }
 
 function renderDashboard() {
@@ -2162,13 +2327,7 @@ async function closeMonth() {
     }
 
     pdf.save(`relatorio-financeiro-${currentMonthKey()}.pdf`);
-    const appointments = state.appointments;
-    const holidays = state.holidays;
-    const menstrualRecords = state.menstrualRecords;
     state = emptyState();
-    state.appointments = appointments;
-    state.holidays = holidays;
-    state.menstrualRecords = menstrualRecords;
     activeMonthKey = currentMonthKey();
     renderAll();
     await saveRemoteNow();
@@ -2210,6 +2369,9 @@ function buildPDFReport() {
 
     <h2>Registro menstrual</h2>
     ${menstrualReportTable()}
+
+    <h2>Lista de tarefas</h2>
+    ${taskReportTable()}
 
     <h2>Investimentos</h2>
     <table>
@@ -2261,6 +2423,20 @@ function menstrualReportTable() {
       return `<tr><td>${date}</td><td>${symptoms}</td></tr>`;
     }).join("") || '<tr><td colspan="2">Nenhum dia de menstruação registrado.</td></tr>'}
     <tr><th>Total de dias registrados</th><th>${records.length}</th></tr>
+  </table>`;
+}
+
+function taskReportTable() {
+  const tasks = [...state.tasks].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return `<table>
+    <tr><th>Tarefa</th><th>Status</th><th>Criação</th><th>Prazo</th><th>Conclusão</th></tr>
+    ${tasks.map(task => `<tr>
+      <td>${escapeHTML(task.title)}</td>
+      <td>${taskStatuses[task.status]}${isTaskOverdue(task) ? " · Atrasada" : ""}</td>
+      <td>${formatDateBR(task.createdAt)}</td>
+      <td>${task.dueDate ? formatDateBR(task.dueDate) : "Sem prazo"}</td>
+      <td>${task.completedAt ? formatDateBR(task.completedAt) : "—"}</td>
+    </tr>`).join("") || '<tr><td colspan="5">Nenhuma tarefa cadastrada.</td></tr>'}
   </table>`;
 }
 

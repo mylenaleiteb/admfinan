@@ -46,6 +46,7 @@
       <nav class="nav" id="nav">
         <button class="active" data-section="dashboard">📊 Dashboard</button>
         <button data-section="calendar">📅 Calendário</button>
+        <button data-section="tasks">✅ Lista de tarefas</button>
         <button data-section="incomes">⬆️ Entradas</button>
         <button data-section="work">💼 Trabalho</button>
         <button data-section="fixed">📌 Despesas fixas</button>
@@ -147,6 +148,41 @@
           </div>
           <div class="calendar-grid" id="calendarGrid" aria-label="Calendário do mês vigente"></div>
         </article>
+      </section>
+
+      <section class="section" id="tasks">
+        <article class="card task-form-card">
+          <div class="section-head compact-head">
+            <div>
+              <h3 id="taskFormTitle">Nova tarefa</h3>
+              <span class="muted">Organize as tarefas do mês e acompanhe os prazos.</span>
+            </div>
+            <button class="btn secondary small" type="button" id="clearTaskForm">Limpar</button>
+          </div>
+          <form id="taskForm" class="form-grid task-form">
+            <input type="hidden" id="taskId" />
+            <div class="field task-title-field"><label for="taskTitle">Tarefa</label><input id="taskTitle" required maxlength="120" placeholder="Ex: Renovar a CNH" /></div>
+            <div class="field"><label for="taskDeadlineDays">Prazo (dias corridos)</label><input id="taskDeadlineDays" type="number" min="1" step="1" placeholder="Opcional" /></div>
+            <div class="field"><label for="taskStatus">Status</label><select id="taskStatus"><option value="todo">A fazer</option><option value="doing">Fazendo</option><option value="done">Feito</option></select></div>
+            <div class="field task-description-field"><label for="taskDescription">Detalhes</label><textarea id="taskDescription" maxlength="600" rows="2" placeholder="Contexto ou observações opcionais"></textarea></div>
+            <button class="btn task-submit" type="submit">💾 Salvar tarefa</button>
+          </form>
+        </article>
+
+        <div class="task-board" id="taskBoard">
+          <section class="task-column task-column-todo">
+            <header><span>A fazer</span><strong id="taskCount-todo">0</strong></header>
+            <div class="task-list" id="taskList-todo"></div>
+          </section>
+          <section class="task-column task-column-doing">
+            <header><span>Fazendo</span><strong id="taskCount-doing">0</strong></header>
+            <div class="task-list" id="taskList-doing"></div>
+          </section>
+          <section class="task-column task-column-done">
+            <header><span>Feito</span><strong id="taskCount-done">0</strong></header>
+            <div class="task-list" id="taskList-done"></div>
+          </section>
+        </div>
       </section>
 
       <section class="section" id="investments">
