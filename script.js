@@ -299,6 +299,12 @@ function normalizeMenstrualRecords(list) {
   return [...new Map(records.map(item => [item.date, item])).values()];
 }
 
+function addDaysToDate(value, days) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function normalizeTaskList(list) {
   return Array.isArray(list) ? list
     .filter(item => String(item?.title || "").trim())
@@ -2453,12 +2459,6 @@ function bcbDate(value) {
 function addYearsToDate(value, years) {
   const date = new Date(`${value}T12:00:00`);
   date.setFullYear(date.getFullYear() + years);
-  return date.toISOString().slice(0, 10);
-}
-
-function addDaysToDate(value, days) {
-  const date = new Date(`${value}T12:00:00`);
-  date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
 }
 
