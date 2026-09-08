@@ -36,6 +36,9 @@ let categoryChart;
 let investmentAllocationChart;
 let investmentEvolutionChart;
 let investmentState = { assets: [], movements: [] };
+let fixedIncomeCdiBusy = false;
+let fixedIncomeCdiAttempt = "";
+let fixedIncomeCdiError = "";
 let workState = { salaries: [], overtimeHours: 0, overtimeUpdatedAt: "" };
 let travelState = { name: "", destination: "", travelDate: "", packingSeeded: false, packingItems: [], itinerary: [] };
 let supabaseClient = null;
@@ -344,6 +347,15 @@ function normalizeInvestmentState(data) {
       name,
       type,
       institution: String(item.institution || "").trim().slice(0, 60),
+      ...(type === "fixed_income" ? {
+        maturityDate: validDateInput(item.maturityDate) ? item.maturityDate : "",
+        cdiPercentage: item.cdiPercentage != null && item.cdiPercentage !== "" && Number.isFinite(Number(item.cdiPercentage)) && Number(item.cdiPercentage) >= 0
+          ? Number(item.cdiPercentage) : null
+      } : {}),
+      ...(type === "treasury" ? {
+        maturityDate: validDateInput(item.maturityDate) ? item.maturityDate : "",
+        rate: String(item.rate || "").trim().slice(0, 60)
+      } : {}),
       legacyBalance: Math.max(0, Number(item.currentValue || 0))
     };
   }) : [];
@@ -372,7 +384,11 @@ function normalizeInvestmentState(data) {
   });
   return {
     assets: assets.map(({ legacyBalance, ...asset }) => asset),
-    movements
+    movements,
+    cdiRates: Array.isArray(data?.cdiRates) ? data.cdiRates.filter(item => validDateInput(item.date) && Number.isFinite(item.value) && item.value >= 0) : [],
+    cdiCoverageStart: validDateInput(data?.cdiCoverageStart) ? data.cdiCoverageStart : "",
+    cdiCoverageEnd: validDateInput(data?.cdiCoverageEnd) ? data.cdiCoverageEnd : "",
+    cdiLastSync: typeof data?.cdiLastSync === "string" ? data.cdiLastSync : ""
   };
 }
 
@@ -896,6 +912,7 @@ function bindEvents() {
   $("movementForm").addEventListener("submit", saveInvestmentMovement);
   $("investmentTypeGrid").addEventListener("submit", handleInvestmentGridSubmit);
   $("investmentTypeGrid").addEventListener("click", handleInvestmentGridClick);
+  $("updateFixedIncomeCdi").addEventListener("click", () => syncFixedIncomeCdi(true));
 
   $("clearIncomeForm").addEventListener("click", () => resetForm("incomes"));
   $("clearFixedForm").addEventListener("click", () => resetForm("fixedExpenses"));
@@ -2662,6 +2679,95 @@ function renderInvestmentCharts() {
 */
 
 // A carteira simplificada usa somente as movimentações para calcular os saldos.
+function estimateFixedIncomeCdi(asset, state = investmentState, today = todayInput()) {
+  if (asset.type !== "fixed_income" || asset.cdiPercentage == null) return null;
+  const movements = state.movements.filter(item => item.assetId === asset.id && item.date <= today)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (!movements.length) return { balance: 0, income: 0, lastRateDate: "" };
+  const start = movements[0].date;
+  if (!state.cdiCoverageStart || state.cdiCoverageStart > start || state.cdiCoverageEnd < start) return null;
+  const end = asset.maturityDate && asset.maturityDate < today ? asset.maturityDate : today;
+  const rates = new Map((state.cdiRates || []).filter(item => item.date >= start && item.date <= end).map(item => [item.date, item.value]));
+  const grouped = new Map();
+  movements.forEach(item => {
+    if (!grouped.has(item.date)) grouped.set(item.date, []);
+    grouped.get(item.date).push(item);
+  });
+  let balance = 0;
+  let net = 0;
+  let lastRateDate = "";
+  [...new Set([...grouped.keys(), ...rates.keys()])].sort().forEach(date => {
+    const daily = grouped.get(date) || [];
+    const entries = daily.filter(item => ["contribution", "purchase"].includes(item.type)).reduce((sum, item) => sum + Number(item.value), 0);
+    const exits = daily.filter(item => ["withdrawal", "sale"].includes(item.type)).reduce((sum, item) => sum + Number(item.value), 0);
+    balance -= exits;
+    if (rates.has(date)) {
+      balance += Math.max(0, balance) * rates.get(date) / 100 * asset.cdiPercentage / 100;
+      lastRateDate = date;
+    }
+    balance += entries;
+    net += entries - exits;
+  });
+  return { balance, income: balance - net, lastRateDate };
+}
+
+function renderFixedIncomeCdiStatus() {
+  const latest = (investmentState.cdiRates || []).map(item => item.date).sort().pop();
+  $("updateFixedIncomeCdi").disabled = fixedIncomeCdiBusy;
+  $("fixedIncomeCdiStatus").textContent = fixedIncomeCdiBusy ? "Consultando CDI no Banco Central..."
+    : fixedIncomeCdiError || (latest ? `CDI disponível até ${formatDateBR(latest)}. Última consulta: ${new Date(investmentState.cdiLastSync).toLocaleString("pt-BR")}.`
+      : "Informe o percentual do CDI e registre um aporte para calcular a estimativa.");
+}
+
+async function syncFixedIncomeCdi(force = false) {
+  if (fixedIncomeCdiBusy) return;
+  const state = investmentState;
+  const ids = new Set(state.assets.filter(asset => asset.type === "fixed_income" && asset.cdiPercentage != null).map(asset => asset.id));
+  const today = todayInput();
+  const start = state.movements.filter(item => ids.has(item.assetId) && item.date <= today).map(item => item.date).sort()[0];
+  if (!start) return;
+  const key = `${start}:${today}:${state.cdiLastSync || ""}`;
+  if (!force && (fixedIncomeCdiAttempt === key || (state.cdiCoverageStart <= start && state.cdiCoverageEnd >= today))) return;
+  fixedIncomeCdiAttempt = key;
+  fixedIncomeCdiBusy = true;
+  fixedIncomeCdiError = "";
+  renderFixedIncomeCdiStatus();
+  const shiftDay = value => { const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + 1); return date.toISOString().slice(0, 10); };
+  const apiDate = value => value.split("-").reverse().join("/");
+  try {
+    const rates = new Map((state.cdiRates || []).map(item => [item.date, item]));
+    let cursor = state.cdiCoverageStart && state.cdiCoverageStart <= start && state.cdiCoverageEnd
+      ? state.cdiCoverageEnd : start;
+    while (cursor <= today) {
+      const yearEnd = `${cursor.slice(0, 4)}-12-31`;
+      const end = yearEnd < today ? yearEnd : today;
+      const response = await fetch(`https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=${encodeURIComponent(apiDate(cursor))}&dataFinal=${encodeURIComponent(apiDate(end))}`, { signal: AbortSignal.timeout(20000) });
+      if (!response.ok) throw new Error(`CDI HTTP ${response.status}`);
+      const data = await response.json();
+      if (!Array.isArray(data)) throw new Error("Resposta CDI inválida");
+      data.forEach(item => {
+        const date = String(item.data).split("/").reverse().join("-");
+        const value = Number(String(item.valor).replace(",", "."));
+        if (!validDateInput(date) || !Number.isFinite(value) || value < 0) throw new Error("Taxa CDI inválida");
+        if (date >= cursor && date <= end) rates.set(date, { date, value });
+      });
+      cursor = shiftDay(end);
+    }
+    if (investmentState !== state) return;
+    state.cdiRates = [...rates.values()].sort((a, b) => a.date.localeCompare(b.date));
+    state.cdiCoverageStart = state.cdiCoverageStart && state.cdiCoverageStart < start ? state.cdiCoverageStart : start;
+    state.cdiCoverageEnd = today;
+    state.cdiLastSync = new Date().toISOString();
+    saveAll();
+    renderInvestmentGroups();
+  } catch (error) {
+    fixedIncomeCdiError = "Não foi possível atualizar o CDI. Estimativas usam somente o histórico salvo; tente Atualizar CDI novamente.";
+  } finally {
+    fixedIncomeCdiBusy = false;
+    renderFixedIncomeCdiStatus();
+  }
+}
+
 function investmentMovementTotals(assetId = null, ignoredMovementId = "") {
   return investmentState.movements
     .filter(item => (!assetId || item.assetId === assetId) && item.id !== ignoredMovementId)
@@ -2700,6 +2806,8 @@ function renderInvestments() {
     if (!input.value) input.value = todayInput();
   });
   renderInvestmentGroups();
+  renderFixedIncomeCdiStatus();
+  void syncFixedIncomeCdi();
 }
 
 function renderInvestmentSelects() {
@@ -2731,6 +2839,7 @@ function renderInvestmentGroups() {
         .filter(item => item.assetId === asset.id)
         .sort((a, b) => b.date.localeCompare(a.date));
       const defaultMovementType = asset.type === "stocks" ? "purchase" : "contribution";
+      const estimate = estimateFixedIncomeCdi(asset);
       return `<article class="investment-asset-card">
         <div class="investment-asset-main">
           <div><strong>${escapeHTML(asset.name)}</strong><span class="muted">${escapeHTML(asset.institution)}</span></div>
@@ -2740,6 +2849,18 @@ function renderInvestmentGroups() {
           <span>Entradas: ${money(summary.entries)}</span>
           <span>Saídas: ${money(summary.exits)}</span>
         </div>
+        ${asset.type === "treasury" ? `<div class="investment-asset-totals">
+          <span>Vencimento: ${asset.maturityDate ? formatDateBR(asset.maturityDate) : "Não informado"}</span>
+          <span>Taxa contratada: ${escapeHTML(asset.rate || "Não informada")}</span>
+        </div>` : ""}
+        ${asset.type === "fixed_income" ? `<div class="investment-asset-totals">
+          <span>Taxa do CDI: ${asset.cdiPercentage != null ? `${Number(asset.cdiPercentage).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% do CDI` : "Não informada"}</span>
+          <span>Vencimento: ${asset.maturityDate ? formatDateBR(asset.maturityDate) : "Não informado"}</span>
+          <span>Saldo de aportes e resgates: ${money(summary.balance)}</span>
+          <span>Rendimento bruto estimado: ${estimate ? money(estimate.income) : "Aguardando taxa e histórico CDI"}</span>
+          <span>Saldo bruto estimado: ${estimate ? money(estimate.balance) : "Indisponível"}</span>
+          ${estimate?.lastRateDate ? `<span>CDI considerado até ${formatDateBR(estimate.lastRateDate)}</span>` : ""}
+        </div>` : ""}
         <div class="actions">
           <button class="btn secondary small" type="button" onclick="editInvestment('${escapeHTML(asset.id)}')">Editar</button>
           <button class="btn danger small" type="button" onclick="deleteInvestment('${escapeHTML(asset.id)}')">Excluir</button>
@@ -2800,7 +2921,16 @@ function saveCategoryInvestment(form) {
     id,
     name: form.querySelector("[data-investment-name]").value.trim(),
     type,
-    institution: form.querySelector("[data-investment-institution]").value.trim()
+    institution: form.querySelector("[data-investment-institution]").value.trim(),
+    ...(type === "fixed_income" ? {
+      maturityDate: form.querySelector("[data-investment-maturity-date]").value,
+      cdiPercentage: form.querySelector("[data-investment-cdi-percentage]").value === ""
+        ? null : Number(form.querySelector("[data-investment-cdi-percentage]").value)
+    } : {}),
+    ...(type === "treasury" ? {
+      maturityDate: form.querySelector("[data-investment-maturity-date]").value,
+      rate: form.querySelector("[data-investment-rate]").value.trim()
+    } : {})
   };
   if (isNew) investmentState.assets.push(asset);
   else investmentState.assets[index] = asset;
@@ -2900,6 +3030,14 @@ function editInvestment(id) {
   form.querySelector("[data-investment-id]").value = asset.id;
   form.querySelector("[data-investment-name]").value = asset.name;
   form.querySelector("[data-investment-institution]").value = asset.institution;
+  if (asset.type === "fixed_income") {
+    form.querySelector("[data-investment-maturity-date]").value = asset.maturityDate || "";
+    form.querySelector("[data-investment-cdi-percentage]").value = asset.cdiPercentage ?? "";
+  }
+  if (asset.type === "treasury") {
+    form.querySelector("[data-investment-maturity-date]").value = asset.maturityDate || "";
+    form.querySelector("[data-investment-rate]").value = asset.rate || "";
+  }
   form.querySelector("[data-investment-initial]").value = "";
   form.querySelector("[data-investment-initial]").disabled = true;
   form.querySelector("[data-investment-initial-date]").disabled = true;

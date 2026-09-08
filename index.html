@@ -292,6 +292,8 @@
               <div class="field"><label>Instituição</label><input data-investment-institution required maxlength="60" placeholder="Banco ou corretora" /></div>
               <div class="field"><label>Aporte inicial</label><input data-investment-initial type="number" min="0" step="0.01" /></div>
               <div class="field"><label>Data inicial</label><input data-investment-initial-date required type="date" /></div>
+              <div class="field"><label for="treasuryMaturityDate">Data de vencimento</label><input id="treasuryMaturityDate" data-investment-maturity-date type="date" /></div>
+              <div class="field"><label for="treasuryRate">Taxa contratada</label><input id="treasuryRate" data-investment-rate maxlength="60" placeholder="Ex: 12% a.a. ou IPCA + 6% a.a." /></div>
               <div class="actions"><button class="btn" type="submit">Salvar</button><button class="btn secondary" type="button" data-clear-investment-form="treasury">Limpar</button></div>
             </form>
             <div id="investmentTreasuryList" class="investment-asset-list"></div>
@@ -304,8 +306,13 @@
               <div class="field"><label>Instituição</label><input data-investment-institution required maxlength="60" placeholder="Banco ou corretora" /></div>
               <div class="field"><label>Aporte inicial</label><input data-investment-initial type="number" min="0" step="0.01" /></div>
               <div class="field"><label>Data inicial</label><input data-investment-initial-date required type="date" /></div>
+              <div class="field"><label for="fixedIncomeCdiPercentage">Taxa do CDI (%)</label><input id="fixedIncomeCdiPercentage" data-investment-cdi-percentage type="number" min="0" step="0.01" placeholder="Ex: 110 para 110% do CDI" /></div>
+              <div class="field"><label for="fixedIncomeMaturityDate">Data de vencimento</label><input id="fixedIncomeMaturityDate" data-investment-maturity-date type="date" /></div>
               <div class="actions"><button class="btn" type="submit">Salvar</button><button class="btn secondary" type="button" data-clear-investment-form="fixed_income">Limpar</button></div>
             </form>
+            <p class="muted">Estimativa bruta, sem impostos e taxas. Aportes começam a render no próximo dia com CDI publicado; resgates são descontados antes do rendimento do dia. O vencimento encerra a acumulação.</p>
+            <button class="btn secondary small" type="button" id="updateFixedIncomeCdi">Atualizar CDI</button>
+            <p id="fixedIncomeCdiStatus" class="muted" role="status"></p>
             <div id="investmentFixedIncomeList" class="investment-asset-list"></div>
           </article>
           <article class="card investment-type-card investment-type-stocks">
