@@ -799,6 +799,19 @@ body.dark .toast div {
 .packing-item span { overflow-wrap: anywhere; }
 .packing-item.packed span { color: var(--muted); text-decoration: line-through; }
 .travel-empty { margin: 8px 0; }
+.supermarket-checklist-card { margin-top: 14px; max-width: 720px; }
+.supermarket-checklist-card .compact-head > div { display: grid; gap: 3px; }
+.supermarket-checklist-form { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 8px; margin: 10px 0; }
+.supermarket-checklist { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 14px; }
+.supermarket-checklist-item { display: flex; align-items: center; justify-content: space-between; min-height: 31px; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.supermarket-checklist-item label { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.supermarket-checklist-item input { flex: 0 0 15px; width: 15px; height: 15px; min-height: 15px; margin: 0; padding: 0; }
+.supermarket-checklist-item span { overflow-wrap: anywhere; }
+.supermarket-checklist-item.checked span { color: var(--muted); text-decoration: line-through; }
+.supermarket-checklist-item button { flex: 0 0 auto; border: 0; padding: 0 4px; color: var(--muted); background: transparent; font-size: 17px; cursor: pointer; }
+.supermarket-checklist-item button:hover { color: var(--danger); }
+.supermarket-checklist-empty { margin: 4px 0; }
+.supermarket-report-list { padding-left: 0; list-style: none; }
 .itinerary-form { grid-template-columns: 1.2fr 120px 1fr 1.4fr auto; }
 .itinerary-table-wrap { margin-top: 12px; }
 .itinerary-table-wrap table { min-width: 760px; }
@@ -999,6 +1012,13 @@ textarea { resize: vertical; padding: 5px; }
 .investment-form-card,
 .movement-form-card { margin-top: 8px; }
 
+.investment-metrics[hidden],
+.investment-form-card[hidden],
+.investment-groups-head[hidden],
+.movement-form-card[hidden],
+.movement-history-head[hidden],
+#investments > .table-wrap[hidden] { display: none !important; }
+
 .investment-form-card,
 .movement-form-card { width: 100%; }
 
@@ -1009,6 +1029,37 @@ textarea { resize: vertical; padding: 5px; }
 .movement-form {
   grid-template-columns: 1.3fr .8fr 1fr .8fr 1.2fr auto;
 }
+
+.investment-groups-head > div:first-child { display: grid; gap: 3px; }
+.investment-type-grid { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; margin-bottom: 12px; }
+.investment-type-card { padding: 0; overflow: hidden; }
+.investment-type-card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
+.investment-type-card > header > div { display: flex; align-items: center; gap: 7px; }
+.investment-type-card > header h3 { margin: 0; font-size: 13px; }
+.investment-type-card > header > strong { white-space: nowrap; color: var(--primary-dark); }
+.investment-type-icon { font-size: 18px; }
+.investment-type-treasury { border-top: 3px solid #d98a16; }
+.investment-type-fixed-income { border-top: 3px solid #1466d8; }
+.investment-type-stocks { border-top: 3px solid #0f8f7f; }
+.investment-asset-list { display: grid; gap: 7px; padding: 9px; }
+.investment-category-form { display: grid; grid-template-columns: minmax(180px, 1.3fr) minmax(160px, 1fr) 150px 130px auto; gap: 8px; align-items: end; padding: 10px 12px; border-bottom: 1px solid var(--border); background: rgba(20,102,216,.035); }
+.investment-category-form .actions { flex-wrap: nowrap; }
+.investment-asset-card { display: grid; gap: 8px; padding: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.34); }
+body.dark .investment-asset-card { background: rgba(255,255,255,.03); }
+.investment-asset-main { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.investment-asset-main > div { display: grid; gap: 3px; min-width: 0; }
+.investment-asset-balance { white-space: nowrap; color: var(--primary-dark); }
+.investment-asset-totals { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--muted); font-size: 10px; }
+.investment-group-empty { margin: 5px 2px; }
+.investment-movement-panel,
+.investment-history-panel { border-top: 1px solid var(--border); padding-top: 7px; }
+.investment-movement-panel summary,
+.investment-history-panel summary { color: var(--primary-dark); font-weight: 700; cursor: pointer; }
+.investment-inline-movement { display: grid; grid-template-columns: 130px 140px 140px minmax(180px, 1fr) auto; gap: 8px; align-items: end; padding-top: 9px; }
+.investment-movement-list { display: grid; gap: 4px; padding-top: 8px; }
+.investment-movement-item { display: grid; grid-template-columns: 90px 90px 110px minmax(140px, 1fr) auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.movement-purchase { color: var(--primary-dark); background: rgba(20,102,216,.1); border-color: rgba(20,102,216,.4); }
+.movement-sale { color: var(--danger); background: rgba(204,0,0,.1); border-color: rgba(204,0,0,.4); }
 
 .investment-table { min-width: 1040px; }
 
@@ -1188,9 +1239,16 @@ body.dark .emoji-trigger {
   .form-grid  { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .investment-form,
   .movement-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .investment-category-form,
+  .investment-inline-movement { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .investment-movement-item { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .travel-title-card { grid-template-columns: 1fr 1fr; }
   .travel-title-card .travel-title-copy { grid-column: 1 / -1; }
   .travel-grid { grid-template-columns: 1fr; }
+  .investment-type-grid { grid-template-columns: 1fr; }
+  .investment-category-form,
+  .investment-inline-movement,
+  .investment-movement-item { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
@@ -1225,6 +1283,8 @@ body.dark .emoji-trigger {
   .packing-list { display: grid; grid-template-columns: 1fr; gap: 14px; }
   .packing-group { width: 100%; max-width: none; }
   .packing-group-columns { grid-template-columns: 1fr; gap: 0; }
+  .supermarket-checklist-form { grid-template-columns: 1fr; }
+  .supermarket-checklist { grid-template-columns: 1fr; }
   .form-grid.compact.work-overtime-form { grid-template-columns: 1fr; }
 
   .entry-form-card {
@@ -1237,6 +1297,7 @@ body.dark .emoji-trigger {
   .metric { min-height: 80px; }
   .chart-box { height: 240px; }
   .movement-history-head { align-items: stretch; flex-direction: column; }
+  .investment-groups-head { align-items: stretch; flex-direction: column; }
   .work-head { align-items: stretch; flex-direction: column; }
   .work-year-field { width: 100%; }
   .history-filters { display: grid; grid-template-columns: 1fr; }

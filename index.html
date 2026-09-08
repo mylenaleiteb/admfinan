@@ -100,7 +100,7 @@
             <div class="icon">📌</div>
           </article>
           <article class="card metric">
-            <div><span>Aportes no mês</span><strong id="dashInvestments">R$ 0,00</strong></div>
+            <div><span>Aportes e compras no mês</span><strong id="dashInvestments">R$ 0,00</strong></div>
             <div class="icon">📈</div>
           </article>
         </div>
@@ -234,51 +234,22 @@
       </section>
 
       <section class="section" id="investments">
-        <div class="grid cards investment-metrics">
+        <div class="grid cards investment-metrics" hidden>
           <article class="card metric">
-            <div><span>Patrimônio atual</span><strong id="investmentPatrimony">R$ 0,00</strong></div>
+            <div><span>Total investido</span><strong id="investmentTotalBalance">R$ 0,00</strong></div>
             <div class="icon">💼</div>
           </article>
           <article class="card metric">
-            <div><span>Aportado líquido</span><strong id="investmentNetContributed">R$ 0,00</strong></div>
+            <div><span>Aportes e compras</span><strong id="investmentTotalEntries">R$ 0,00</strong></div>
             <div class="icon">💰</div>
           </article>
           <article class="card metric">
-            <div><span>Resultado acumulado</span><strong id="investmentResult">R$ 0,00</strong></div>
-            <div class="icon">📊</div>
-          </article>
-          <article class="card metric">
-            <div><span>Proventos recebidos</span><strong id="investmentIncome">R$ 0,00</strong></div>
-            <div class="icon">🪙</div>
+            <div><span>Resgates e vendas</span><strong id="investmentTotalExits">R$ 0,00</strong></div>
+            <div class="icon">💸</div>
           </article>
         </div>
 
-        <div class="grid two investment-charts">
-          <article class="card">
-            <div class="section-head compact-head">
-              <h3>Distribuição por classe</h3>
-              <span class="muted">Com base no patrimônio atual</span>
-            </div>
-            <div class="chart-box"><canvas id="investmentAllocationChart"></canvas></div>
-          </article>
-          <article class="card">
-            <div class="section-head compact-head">
-              <h3>Evolução do patrimônio</h3>
-              <span class="muted">Atualizada ao salvar os saldos</span>
-            </div>
-            <div class="chart-box"><canvas id="investmentEvolutionChart"></canvas></div>
-          </article>
-        </div>
-
-        <article class="card cdi-sync-card">
-          <div>
-            <strong>Rentabilidade automática pelo CDI</strong>
-            <span class="muted" id="cdiSyncStatus">Nenhum investimento automático cadastrado.</span>
-          </div>
-          <button class="btn secondary" id="refreshCdiRates">🔄 Atualizar CDI</button>
-        </article>
-
-        <article class="card investment-form-card">
+        <article class="card investment-form-card" hidden>
           <div class="section-head compact-head">
             <h3 id="investmentFormTitle">Novo investimento</h3>
             <button class="btn secondary small" id="clearInvestmentForm">Limpar</button>
@@ -289,49 +260,69 @@
             <div class="field">
               <label>Classe</label>
               <select id="investmentType" required>
+                <option value="treasury">Tesouro Direto</option>
                 <option value="fixed_income">Renda fixa</option>
                 <option value="stocks">Ações</option>
-                <option value="real_estate_funds">Fundos imobiliários</option>
-                <option value="funds">Fundos</option>
-                <option value="crypto">Criptomoedas</option>
-                <option value="pension">Previdência</option>
-                <option value="other">Outros</option>
               </select>
             </div>
             <div class="field"><label>Instituição</label><input id="investmentInstitution" required maxlength="60" placeholder="Ex: Banco ou corretora" /></div>
-            <div class="field">
-              <label>Atualização do saldo</label>
-              <select id="investmentYieldMode" required>
-                <option value="manual">Manual</option>
-                <option value="cdi">Automática pelo CDI</option>
-              </select>
-            </div>
-            <div class="field cdi-field" id="investmentCdiPercentageField" hidden><label>Percentual do CDI</label><input id="investmentCdiPercentage" type="number" min="0" step="0.01" value="100" /></div>
-            <div class="field cdi-field" id="investmentBaseDateField" hidden><label>Data-base do saldo</label><input id="investmentBaseDate" type="date" /></div>
-            <div class="field"><label id="investmentCurrentValueLabel">Saldo atual</label><input id="investmentCurrentValue" required type="number" min="0" step="0.01" /></div>
-            <div class="field"><label>Aporte inicial (novo cadastro)</label><input id="investmentInitialContribution" type="number" min="0" step="0.01" /></div>
+            <div class="field"><label>Aporte ou compra inicial</label><input id="investmentInitialContribution" type="number" min="0" step="0.01" /></div>
+            <div class="field"><label>Data inicial</label><input id="investmentInitialDate" required type="date" /></div>
             <button class="btn" type="submit">💾 Salvar investimento</button>
           </form>
-          <p class="muted cdi-form-help" id="investmentCdiHelp" hidden>Informe o saldo que existia na data-base. O app aplicará o CDI dos dias seguintes até a última taxa disponível. Valores são estimativas brutas, antes de IR e IOF.</p>
         </article>
 
-        <div class="section-head">
-          <h3>Carteira de investimentos</h3>
+        <div class="section-head investment-groups-head" hidden>
+          <div>
+            <h3>Meus investimentos</h3>
+            <span class="muted">O saldo considera somente as movimentações registradas.</span>
+          </div>
           <div class="actions">
             <button class="btn secondary small" id="exportInvestments">Exportar backup</button>
             <button class="btn secondary small" id="importInvestments">Importar backup</button>
             <input id="investmentBackupFile" type="file" accept="application/json,.json" hidden />
           </div>
         </div>
-        <div class="table-wrap">
-          <table class="simple-table investment-table">
-            <thead><tr><th>Investimento</th><th>Classe</th><th>Instituição</th><th>Atualização</th><th>Aportado líquido</th><th>Valor atual</th><th>Resultado</th><th>Ações</th></tr></thead>
-            <tbody id="investmentTable"></tbody>
-            <tfoot><tr><td colspan="4">Total</td><td id="investmentTableNetTotal">R$ 0,00</td><td id="investmentTableValueTotal">R$ 0,00</td><td id="investmentTableResultTotal">R$ 0,00</td><td></td></tr></tfoot>
-          </table>
+        <div class="investment-type-grid" id="investmentTypeGrid">
+          <article class="card investment-type-card investment-type-treasury">
+            <header><div><span class="investment-type-icon">🏛️</span><h3>Tesouro Direto</h3></div><strong id="investmentTreasuryTotal">R$ 0,00</strong></header>
+            <form class="investment-category-form" data-investment-category-form="treasury">
+              <input type="hidden" data-investment-id />
+              <div class="field"><label>Nome do título</label><input data-investment-name required maxlength="80" placeholder="Ex: Tesouro Selic 2029" /></div>
+              <div class="field"><label>Instituição</label><input data-investment-institution required maxlength="60" placeholder="Banco ou corretora" /></div>
+              <div class="field"><label>Aporte inicial</label><input data-investment-initial type="number" min="0" step="0.01" /></div>
+              <div class="field"><label>Data inicial</label><input data-investment-initial-date required type="date" /></div>
+              <div class="actions"><button class="btn" type="submit">Salvar</button><button class="btn secondary" type="button" data-clear-investment-form="treasury">Limpar</button></div>
+            </form>
+            <div id="investmentTreasuryList" class="investment-asset-list"></div>
+          </article>
+          <article class="card investment-type-card investment-type-fixed-income">
+            <header><div><span class="investment-type-icon">🏦</span><h3>Renda Fixa</h3></div><strong id="investmentFixedIncomeTotal">R$ 0,00</strong></header>
+            <form class="investment-category-form" data-investment-category-form="fixed_income">
+              <input type="hidden" data-investment-id />
+              <div class="field"><label>Nome do investimento</label><input data-investment-name required maxlength="80" placeholder="Ex: CDB do banco" /></div>
+              <div class="field"><label>Instituição</label><input data-investment-institution required maxlength="60" placeholder="Banco ou corretora" /></div>
+              <div class="field"><label>Aporte inicial</label><input data-investment-initial type="number" min="0" step="0.01" /></div>
+              <div class="field"><label>Data inicial</label><input data-investment-initial-date required type="date" /></div>
+              <div class="actions"><button class="btn" type="submit">Salvar</button><button class="btn secondary" type="button" data-clear-investment-form="fixed_income">Limpar</button></div>
+            </form>
+            <div id="investmentFixedIncomeList" class="investment-asset-list"></div>
+          </article>
+          <article class="card investment-type-card investment-type-stocks">
+            <header><div><span class="investment-type-icon">📈</span><h3>Ações</h3></div><strong id="investmentStocksTotal">R$ 0,00</strong></header>
+            <form class="investment-category-form" data-investment-category-form="stocks">
+              <input type="hidden" data-investment-id />
+              <div class="field"><label>Ativo</label><input data-investment-name required maxlength="80" placeholder="Ex: PETR4" /></div>
+              <div class="field"><label>Corretora</label><input data-investment-institution required maxlength="60" placeholder="Banco ou corretora" /></div>
+              <div class="field"><label>Compra inicial</label><input data-investment-initial type="number" min="0" step="0.01" /></div>
+              <div class="field"><label>Data inicial</label><input data-investment-initial-date required type="date" /></div>
+              <div class="actions"><button class="btn" type="submit">Salvar</button><button class="btn secondary" type="button" data-clear-investment-form="stocks">Limpar</button></div>
+            </form>
+            <div id="investmentStocksList" class="investment-asset-list"></div>
+          </article>
         </div>
 
-        <article class="card movement-form-card">
+        <article class="card movement-form-card" hidden>
           <div class="section-head compact-head">
             <h3 id="movementFormTitle">Nova movimentação</h3>
             <button class="btn secondary small" id="clearMovementForm">Limpar</button>
@@ -345,8 +336,8 @@
               <select id="movementType" required>
                 <option value="contribution">Aporte</option>
                 <option value="withdrawal">Resgate</option>
-                <option value="income">Provento recebido</option>
-                <option value="fee">Taxa</option>
+                <option value="purchase">Compra</option>
+                <option value="sale">Venda</option>
               </select>
             </div>
             <div class="field"><label>Valor</label><input id="movementValue" required type="number" min="0.01" step="0.01" /></div>
@@ -355,7 +346,7 @@
           </form>
         </article>
 
-        <div class="section-head movement-history-head">
+        <div class="section-head movement-history-head" hidden>
           <h3>Histórico de movimentações</h3>
           <div class="history-filters">
             <div class="field"><label>Mês</label><input id="movementMonthFilter" type="month" /></div>
@@ -363,12 +354,13 @@
             <button class="btn secondary small" id="clearMovementFilters">Ver todos</button>
           </div>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap" hidden>
           <table class="simple-table">
             <thead><tr><th>Data</th><th>Investimento</th><th>Tipo</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
             <tbody id="movementTable"></tbody>
           </table>
         </div>
+
       </section>
 
       <section class="section" id="incomes">
@@ -526,6 +518,20 @@
             <tfoot><tr><td>Total</td><td id="supermarketFooterTotal">R$ 0,00</td><td></td></tr></tfoot>
           </table>
         </div>
+
+        <article class="card supermarket-checklist-card">
+          <div class="section-head compact-head">
+            <div>
+              <h3>Lista de compras</h3>
+              <span class="muted" id="supermarketChecklistProgress">0 de 0 itens comprados</span>
+            </div>
+          </div>
+          <form id="supermarketChecklistForm" class="supermarket-checklist-form">
+            <input id="supermarketChecklistText" required maxlength="120" placeholder="Adicionar item à lista de compras" />
+            <button class="btn" type="submit">+ Adicionar</button>
+          </form>
+          <div id="supermarketChecklist" class="supermarket-checklist"></div>
+        </article>
       </section>
 
       <section class="section" id="categories">

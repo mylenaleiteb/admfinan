@@ -21,6 +21,7 @@ const emptyState = () => ({
   fixedExpenses: [],
   variableExpenses: [],
   supermarketExpenses: [],
+  supermarketItems: [],
   appointments: [],
   holidays: [],
   menstrualRecords: [],
@@ -34,10 +35,9 @@ let categories = [];
 let categoryChart;
 let investmentAllocationChart;
 let investmentEvolutionChart;
-let investmentState = { assets: [], movements: [], snapshots: [], cdiRates: [], cdiLastSync: "" };
+let investmentState = { assets: [], movements: [] };
 let workState = { salaries: [], overtimeHours: 0, overtimeUpdatedAt: "" };
 let travelState = { name: "", destination: "", travelDate: "", packingSeeded: false, packingItems: [], itinerary: [] };
-let cdiSyncMessage = "";
 let supabaseClient = null;
 let currentUser = null;
 let remoteReady = false;
@@ -109,20 +109,16 @@ const modules = {
 };
 
 const investmentTypes = {
+  treasury: { label: "Tesouro Direto", color: "#d98a16" },
   fixed_income: { label: "Renda fixa", color: "#1466d8" },
-  stocks: { label: "Ações", color: "#0f8f7f" },
-  real_estate_funds: { label: "Fundos imobiliários", color: "#6d5dfc" },
-  funds: { label: "Fundos", color: "#d98a16" },
-  crypto: { label: "Criptomoedas", color: "#d64545" },
-  pension: { label: "Previdência", color: "#7b4f9d" },
-  other: { label: "Outros", color: "#63717d" }
+  stocks: { label: "Ações", color: "#0f8f7f" }
 };
 
 const movementTypes = {
   contribution: "Aporte",
   withdrawal: "Resgate",
-  income: "Provento recebido",
-  fee: "Taxa"
+  purchase: "Compra",
+  sale: "Venda"
 };
 
 // ADICIONE NOVOS SINTOMAS MENSTRUAIS AQUI.
@@ -247,6 +243,7 @@ function normalizeState(data) {
   next.fixedExpenses = normalizeExpenseList(data?.fixedExpenses);
   next.variableExpenses = normalizeExpenseList(data?.variableExpenses);
   next.supermarketExpenses = normalizeSupermarketList(data?.supermarketExpenses);
+  next.supermarketItems = normalizeSupermarketItems(data?.supermarketItems);
   next.appointments = normalizeAppointmentList(data?.appointments);
   next.holidays = normalizeHolidayList(data?.holidays);
   next.menstrualRecords = normalizeMenstrualRecords(data?.menstrualRecords);
@@ -261,11 +258,21 @@ function normalizeAppointmentList(list) {
   return Array.isArray(list) ? list
     .filter(item => validDateInput(item?.date) && String(item?.name || "").trim())
     .map(item => ({
-      id: item.id || uid(),
+      id: String(item.id || uid()),
       name: String(item.name).trim().slice(0, 100),
       date: item.date,
       time: /^\d{2}:\d{2}$/.test(String(item.time || "")) ? item.time : "",
       note: String(item.note || "").trim().slice(0, 500)
+    })) : [];
+}
+
+function normalizeSupermarketItems(list) {
+  return Array.isArray(list) ? list
+    .filter(item => String(item?.text || "").trim())
+    .map(item => ({
+      id: item.id || uid(),
+      text: String(item.text).trim().slice(0, 120),
+      checked: Boolean(item.checked)
     })) : [];
 }
 
@@ -327,33 +334,45 @@ function normalizeSupermarketList(list) {
 }
 
 function normalizeInvestmentState(data) {
-  return {
-    assets: Array.isArray(data?.assets) ? data.assets.map(item => ({
-      id: item.id || uid(),
-      name: String(item.name || "Sem nome"),
-      type: investmentTypes[item.type] ? item.type : "other",
-      institution: String(item.institution || ""),
-      currentValue: Math.max(0, Number(item.currentValue || 0)),
-      yieldMode: item.yieldMode === "cdi" ? "cdi" : "manual",
-      cdiPercentage: Number(item.cdiPercentage) >= 0 ? Number(item.cdiPercentage) : 100,
-      cdiBaseDate: validDateInput(item.cdiBaseDate) ? item.cdiBaseDate : todayInput(),
-      cdiBaseValue: Math.max(0, Number(item.cdiBaseValue ?? item.currentValue ?? 0))
-    })) : [],
-    movements: Array.isArray(data?.movements) ? data.movements.map(item => ({
+  const assets = Array.isArray(data?.assets) ? data.assets.map(item => {
+    const name = String(item.name || "Sem nome").trim().slice(0, 80);
+    const type = item.type === "stocks"
+      ? "stocks"
+      : (item.type === "treasury" || name.toLocaleLowerCase("pt-BR").includes("tesouro") ? "treasury" : "fixed_income");
+    return {
+      id: String(item.id || uid()),
+      name,
+      type,
+      institution: String(item.institution || "").trim().slice(0, 60),
+      legacyBalance: Math.max(0, Number(item.currentValue || 0))
+    };
+  }) : [];
+  const assetIds = new Set(assets.map(asset => asset.id));
+  const movements = Array.isArray(data?.movements) ? data.movements
+    .filter(item => assetIds.has(String(item.assetId || "")))
+    .map(item => ({
       id: item.id || uid(),
       assetId: String(item.assetId || ""),
       date: validDateInput(item.date) ? item.date : todayInput(),
-      type: movementTypes[item.type] ? item.type : "contribution",
+      type: item.type === "income" ? "contribution"
+        : (item.type === "fee" ? "withdrawal" : (movementTypes[item.type] ? item.type : "contribution")),
       value: Math.max(0, Number(item.value || 0)),
-      note: String(item.note || "")
-    })) : [],
-    snapshots: Array.isArray(data?.snapshots) ? data.snapshots
-      .filter(item => validDateInput(item.date))
-      .map(item => ({ date: item.date, total: Math.max(0, Number(item.total || 0)) })) : [],
-    cdiRates: Array.isArray(data?.cdiRates) ? data.cdiRates
-      .filter(item => validDateInput(item.date) && Number.isFinite(Number(item.value)))
-      .map(item => ({ date: item.date, value: Number(item.value) })) : [],
-    cdiLastSync: String(data?.cdiLastSync || "")
+      note: String(item.note || "").trim().slice(0, 100)
+    })) : [];
+  assets.forEach(asset => {
+    if (movements.some(item => item.assetId === asset.id) || asset.legacyBalance <= 0) return;
+    movements.push({
+      id: uid(),
+      assetId: asset.id,
+      date: todayInput(),
+      type: asset.type === "stocks" ? "purchase" : "contribution",
+      value: asset.legacyBalance,
+      note: "Saldo anterior migrado"
+    });
+  });
+  return {
+    assets: assets.map(({ legacyBalance, ...asset }) => asset),
+    movements
   };
 }
 
@@ -457,7 +476,7 @@ function migrateLegacyData() {
 
 function buildAppPayload() {
   return {
-    version: 12,
+    version: 14,
     month: activeMonthKey || currentMonthKey(),
     monthlyState: state,
     categories,
@@ -475,7 +494,7 @@ function legacyLocalPayload() {
   const saved = loadJSON(STORAGE.monthly, null);
   const monthlyState = saved ? normalizeState(saved) : migrateLegacyData();
   return {
-    version: 12,
+    version: 14,
     month: savedMonth,
     monthlyState,
     categories,
@@ -487,6 +506,7 @@ function legacyLocalPayload() {
 }
 
 function applyAppPayload(payload) {
+  const investmentPayloadMigrated = Number(payload?.version || 0) < 14;
   activeMonthKey = String(payload?.month || currentMonthKey());
   state = normalizeState(payload?.monthlyState);
   categories = Array.isArray(payload?.categories) && payload.categories.length
@@ -528,7 +548,7 @@ function applyAppPayload(payload) {
   }
 
   document.body.classList.toggle("dark", payload?.theme === "dark");
-  return monthRolled || salaryImported || workPayloadMigrated || overtimePayloadMigrated || overtimeDateImported || overtimeImported || travelPackingMigrated;
+  return monthRolled || salaryImported || workPayloadMigrated || overtimePayloadMigrated || overtimeDateImported || overtimeImported || travelPackingMigrated || investmentPayloadMigrated;
 }
 
 function userCacheKey() {
@@ -663,7 +683,6 @@ async function startAuthenticatedApp(user) {
   await loadAuthenticatedData();
   $("authScreen").classList.remove("active");
   setAuthMessage("");
-  refreshCdiRates({ silent: true });
 }
 
 async function signIn(event) {
@@ -739,6 +758,7 @@ function bindAuthEvents() {
 async function init() {
   activeMonthKey = currentMonthKey();
   $("currentMonthLabel").textContent = monthName();
+  $("investmentInitialDate").value = todayInput();
   $("movementDate").value = todayInput();
   $("movementMonthFilter").value = currentMonthKey();
   if (localStorage.getItem(STORAGE.theme) === "dark") document.body.classList.add("dark");
@@ -822,6 +842,9 @@ function bindEvents() {
   $("fixedForm").addEventListener("submit", (event) => saveItem(event, "fixedExpenses"));
   $("variableForm").addEventListener("submit", (event) => saveItem(event, "variableExpenses"));
   $("supermarketForm").addEventListener("submit", saveSupermarketExpense);
+  $("supermarketChecklistForm").addEventListener("submit", saveSupermarketItem);
+  $("supermarketChecklist").addEventListener("change", toggleSupermarketItem);
+  $("supermarketChecklist").addEventListener("click", handleSupermarketChecklistClick);
   $("calendarForm").addEventListener("submit", saveAppointment);
   ["nationalHoliday", "localHoliday"].forEach(id => {
     $(id).addEventListener("change", changeHolidayType);
@@ -871,8 +894,8 @@ function bindEvents() {
   });
   $("investmentForm").addEventListener("submit", saveInvestment);
   $("movementForm").addEventListener("submit", saveInvestmentMovement);
-  $("investmentYieldMode").addEventListener("change", renderInvestmentYieldFields);
-  $("refreshCdiRates").addEventListener("click", () => refreshCdiRates());
+  $("investmentTypeGrid").addEventListener("submit", handleInvestmentGridSubmit);
+  $("investmentTypeGrid").addEventListener("click", handleInvestmentGridClick);
 
   $("clearIncomeForm").addEventListener("click", () => resetForm("incomes"));
   $("clearFixedForm").addEventListener("click", () => resetForm("fixedExpenses"));
@@ -933,7 +956,6 @@ function openSection(id) {
   $("pageTitle").textContent = label;
   $("sidebar").classList.remove("open");
   if (id === "dashboard") renderCharts();
-  if (id === "investments") renderInvestmentCharts();
   if (id === "calendar") renderCalendar();
   if (id === "tasks") renderTasks();
   if (id === "travel") renderTravel();
@@ -1511,7 +1533,7 @@ function renderDashboard() {
   $("dashExpense").textContent = money(t.expense);
   $("dashBalance").textContent = money(t.balance);
   $("dashFixed").textContent = money(t.fixed);
-  $("dashInvestments").textContent = money(investmentMovementsForMonth(currentMonthKey(), "contribution"));
+  $("dashInvestments").textContent = money(investmentEntriesForMonth(currentMonthKey()));
   renderHouseAnalysis();
   renderExpenseTypePercentages();
 }
@@ -1663,6 +1685,56 @@ function renderSupermarketExpenses() {
   $("supermarketTable").innerHTML = rows || `<tr><td colspan="3" class="muted">Nenhuma despesa de supermercado cadastrada.</td></tr>`;
   $("supermarketTotal").textContent = money(sumSupermarketExpenses());
   $("supermarketFooterTotal").textContent = money(sumSupermarketExpenses());
+  renderSupermarketChecklist();
+}
+
+function saveSupermarketItem(event) {
+  event.preventDefault();
+  const text = $("supermarketChecklistText").value.trim();
+  if (!text) return;
+  state.supermarketItems.push({ id: uid(), text, checked: false });
+  $("supermarketChecklistForm").reset();
+  renderSupermarketChecklist();
+  saveAll();
+  toast("Item adicionado à lista de compras.");
+}
+
+function toggleSupermarketItem(event) {
+  const checkbox = event.target.closest("input[data-supermarket-item-toggle]");
+  if (!checkbox) return;
+  const item = state.supermarketItems.find(entry => entry.id === checkbox.dataset.supermarketItemToggle);
+  if (!item) return;
+  item.checked = checkbox.checked;
+  renderSupermarketChecklist();
+  saveAll();
+}
+
+function handleSupermarketChecklistClick(event) {
+  const button = event.target.closest("button[data-supermarket-item-delete]");
+  if (!button) return;
+  const item = state.supermarketItems.find(entry => entry.id === button.dataset.supermarketItemDelete);
+  if (!item) return;
+  confirmAction("Excluir item da lista", `Deseja excluir “${item.text}”?`, () => {
+    state.supermarketItems = state.supermarketItems.filter(entry => entry.id !== item.id);
+    renderSupermarketChecklist();
+    saveAll();
+    toast("Item excluído da lista de compras.");
+  });
+}
+
+function renderSupermarketChecklist() {
+  const items = state.supermarketItems || [];
+  const checked = items.filter(item => item.checked).length;
+  $("supermarketChecklistProgress").textContent = `${checked} de ${items.length} itens comprados`;
+  $("supermarketChecklist").innerHTML = items.length ? items.map(item => `
+    <div class="supermarket-checklist-item${item.checked ? " checked" : ""}">
+      <label>
+        <input type="checkbox" data-supermarket-item-toggle="${escapeHTML(item.id)}"${item.checked ? " checked" : ""} />
+        <span>${escapeHTML(item.text)}</span>
+      </label>
+      <button type="button" data-supermarket-item-delete="${escapeHTML(item.id)}" aria-label="Excluir ${escapeHTML(item.text)}">×</button>
+    </div>
+  `).join("") : '<p class="muted supermarket-checklist-empty">Nenhum item adicionado à lista.</p>';
 }
 
 function editSupermarketExpense(id) {
@@ -2078,6 +2150,7 @@ function investmentAssetById(id) {
   return investmentState.assets.find(asset => asset.id === id);
 }
 
+/* Implementação anterior de saldo manual/CDI mantida apenas como referência histórica.
 function investmentMovementTotals(assetId = null) {
   const movements = investmentState.movements.filter(item => !assetId || item.assetId === assetId);
   return movements.reduce((totals, item) => {
@@ -2586,6 +2659,384 @@ function renderInvestmentCharts() {
   });
 }
 
+*/
+
+// A carteira simplificada usa somente as movimentações para calcular os saldos.
+function investmentMovementTotals(assetId = null, ignoredMovementId = "") {
+  return investmentState.movements
+    .filter(item => (!assetId || item.assetId === assetId) && item.id !== ignoredMovementId)
+    .reduce((totals, item) => {
+      totals[item.type] = (totals[item.type] || 0) + Number(item.value || 0);
+      return totals;
+    }, { contribution: 0, withdrawal: 0, purchase: 0, sale: 0 });
+}
+
+function movementBalanceEffect(movement) {
+  const value = Number(movement.value || 0);
+  return movement.type === "contribution" || movement.type === "purchase" ? value : -value;
+}
+
+function investmentSummary(assetId = null, ignoredMovementId = "") {
+  const totals = investmentMovementTotals(assetId, ignoredMovementId);
+  const entries = totals.contribution + totals.purchase;
+  const exits = totals.withdrawal + totals.sale;
+  return { ...totals, entries, exits, balance: entries - exits, current: entries - exits, netContributed: entries - exits };
+}
+
+function investmentMovementsForMonth(month, type = null) {
+  return investmentState.movements
+    .filter(item => item.date.slice(0, 7) === month && (!type || item.type === type))
+    .reduce((sum, item) => sum + Number(item.value || 0), 0);
+}
+
+function investmentEntriesForMonth(month) {
+  return investmentState.movements
+    .filter(item => item.date.slice(0, 7) === month && ["contribution", "purchase"].includes(item.type))
+    .reduce((sum, item) => sum + Number(item.value || 0), 0);
+}
+
+function renderInvestments() {
+  document.querySelectorAll("[data-investment-initial-date]").forEach(input => {
+    if (!input.value) input.value = todayInput();
+  });
+  renderInvestmentGroups();
+}
+
+function renderInvestmentSelects() {
+  const movementValue = $("movementInvestment").value;
+  const filterValue = $("movementAssetFilter").value;
+  const options = investmentState.assets
+    .map(asset => `<option value="${escapeHTML(asset.id)}">${escapeHTML(asset.name)} · ${investmentTypes[asset.type].label}</option>`)
+    .join("");
+  $("movementInvestment").innerHTML = options || '<option value="">Cadastre um investimento primeiro</option>';
+  $("movementInvestment").value = investmentAssetById(movementValue) ? movementValue : (investmentState.assets[0]?.id || "");
+  $("movementAssetFilter").innerHTML = `<option value="">Todos</option>${options}`;
+  $("movementAssetFilter").value = investmentAssetById(filterValue) ? filterValue : "";
+  $("movementForm").querySelector('button[type="submit"]').disabled = !investmentState.assets.length;
+}
+
+function renderInvestmentGroups() {
+  const groups = {
+    treasury: { listId: "investmentTreasuryList", totalId: "investmentTreasuryTotal" },
+    fixed_income: { listId: "investmentFixedIncomeList", totalId: "investmentFixedIncomeTotal" },
+    stocks: { listId: "investmentStocksList", totalId: "investmentStocksTotal" }
+  };
+  Object.entries(groups).forEach(([type, config]) => {
+    const assets = investmentState.assets.filter(asset => asset.type === type);
+    const total = assets.reduce((sum, asset) => sum + investmentSummary(asset.id).balance, 0);
+    $(config.totalId).textContent = money(total);
+    $(config.listId).innerHTML = assets.length ? assets.map(asset => {
+      const summary = investmentSummary(asset.id);
+      const movements = investmentState.movements
+        .filter(item => item.assetId === asset.id)
+        .sort((a, b) => b.date.localeCompare(a.date));
+      const defaultMovementType = asset.type === "stocks" ? "purchase" : "contribution";
+      return `<article class="investment-asset-card">
+        <div class="investment-asset-main">
+          <div><strong>${escapeHTML(asset.name)}</strong><span class="muted">${escapeHTML(asset.institution)}</span></div>
+          <strong class="investment-asset-balance">${money(summary.balance)}</strong>
+        </div>
+        <div class="investment-asset-totals">
+          <span>Entradas: ${money(summary.entries)}</span>
+          <span>Saídas: ${money(summary.exits)}</span>
+        </div>
+        <div class="actions">
+          <button class="btn secondary small" type="button" onclick="editInvestment('${escapeHTML(asset.id)}')">Editar</button>
+          <button class="btn danger small" type="button" onclick="deleteInvestment('${escapeHTML(asset.id)}')">Excluir</button>
+        </div>
+        <details class="investment-movement-panel">
+          <summary>Registrar movimentação</summary>
+          <form class="investment-inline-movement" data-investment-movement-form="${escapeHTML(asset.id)}">
+            <input type="hidden" data-movement-id />
+            <div class="field"><label>Data</label><input data-movement-date required type="date" value="${todayInput()}" /></div>
+            <div class="field"><label>Tipo</label><select data-movement-type required>
+              <option value="contribution"${defaultMovementType === "contribution" ? " selected" : ""}>Aporte</option>
+              <option value="withdrawal">Resgate</option>
+              <option value="purchase"${defaultMovementType === "purchase" ? " selected" : ""}>Compra</option>
+              <option value="sale">Venda</option>
+            </select></div>
+            <div class="field"><label>Valor</label><input data-movement-value required type="number" min="0.01" step="0.01" /></div>
+            <div class="field"><label>Observação</label><input data-movement-note maxlength="100" placeholder="Opcional" /></div>
+            <div class="actions"><button class="btn" type="submit">Salvar movimentação</button><button class="btn secondary" type="button" data-clear-inline-movement="${escapeHTML(asset.id)}">Limpar</button></div>
+          </form>
+        </details>
+        <details class="investment-history-panel">
+          <summary>Histórico (${movements.length})</summary>
+          <div class="investment-movement-list">${movements.map(movement => `
+            <div class="investment-movement-item">
+              <span>${formatDateBR(movement.date)}</span>
+              <span class="status movement-${movement.type}">${movementTypes[movement.type]}</span>
+              <strong>${money(movement.value)}</strong>
+              <span class="muted">${escapeHTML(movement.note || "—")}</span>
+              <div class="actions"><button class="btn secondary small" type="button" onclick="editInvestmentMovement('${escapeHTML(movement.id)}')">Editar</button><button class="btn danger small" type="button" onclick="deleteInvestmentMovement('${escapeHTML(movement.id)}')">Excluir</button></div>
+            </div>`).join("") || '<p class="muted">Nenhuma movimentação registrada.</p>'}</div>
+        </details>
+      </article>`;
+    }).join("") : '<p class="muted investment-group-empty">Nenhum investimento cadastrado.</p>';
+  });
+}
+
+function handleInvestmentGridSubmit(event) {
+  event.preventDefault();
+  const investmentForm = event.target.closest("[data-investment-category-form]");
+  if (investmentForm) saveCategoryInvestment(investmentForm);
+  const movementForm = event.target.closest("[data-investment-movement-form]");
+  if (movementForm) saveInlineInvestmentMovement(movementForm);
+}
+
+function handleInvestmentGridClick(event) {
+  const clearInvestment = event.target.closest("[data-clear-investment-form]");
+  if (clearInvestment) resetCategoryInvestmentForm(clearInvestment.dataset.clearInvestmentForm);
+  const clearMovement = event.target.closest("[data-clear-inline-movement]");
+  if (clearMovement) resetInlineMovementForm(clearMovement.dataset.clearInlineMovement);
+}
+
+function saveCategoryInvestment(form) {
+  const type = form.dataset.investmentCategoryForm;
+  const id = form.querySelector("[data-investment-id]").value || uid();
+  const index = investmentState.assets.findIndex(asset => asset.id === id);
+  const isNew = index < 0;
+  const asset = {
+    id,
+    name: form.querySelector("[data-investment-name]").value.trim(),
+    type,
+    institution: form.querySelector("[data-investment-institution]").value.trim()
+  };
+  if (isNew) investmentState.assets.push(asset);
+  else investmentState.assets[index] = asset;
+  const initialValue = Number(form.querySelector("[data-investment-initial]").value || 0);
+  if (isNew && initialValue > 0) {
+    investmentState.movements.push({
+      id: uid(), assetId: id,
+      date: form.querySelector("[data-investment-initial-date]").value || todayInput(),
+      type: type === "stocks" ? "purchase" : "contribution",
+      value: initialValue,
+      note: type === "stocks" ? "Compra inicial" : "Aporte inicial"
+    });
+  }
+  resetCategoryInvestmentForm(type);
+  renderAll();
+  toast(isNew ? "Investimento cadastrado." : "Investimento atualizado.");
+}
+
+function resetCategoryInvestmentForm(type) {
+  const form = document.querySelector(`[data-investment-category-form="${type}"]`);
+  if (!form) return;
+  form.reset();
+  form.querySelector("[data-investment-id]").value = "";
+  form.querySelector("[data-investment-initial]").disabled = false;
+  form.querySelector("[data-investment-initial-date]").disabled = false;
+  form.querySelector("[data-investment-initial-date]").value = todayInput();
+  form.querySelector('button[type="submit"]').textContent = "Salvar";
+}
+
+function saveInlineInvestmentMovement(form) {
+  const assetId = form.dataset.investmentMovementForm;
+  const id = form.querySelector("[data-movement-id]").value || uid();
+  const movement = {
+    id, assetId,
+    date: form.querySelector("[data-movement-date]").value,
+    type: form.querySelector("[data-movement-type]").value,
+    value: Number(form.querySelector("[data-movement-value]").value),
+    note: form.querySelector("[data-movement-note]").value.trim()
+  };
+  const balanceWithoutEditedMovement = investmentSummary(assetId, id).balance;
+  if (balanceWithoutEditedMovement + movementBalanceEffect(movement) < 0) {
+    toast("A saída não pode ser maior que o saldo deste investimento.", "error");
+    return;
+  }
+  const index = investmentState.movements.findIndex(item => item.id === id);
+  if (index >= 0) investmentState.movements[index] = movement;
+  else investmentState.movements.push(movement);
+  renderAll();
+  toast("Movimentação salva. O saldo foi recalculado.");
+}
+
+function resetInlineMovementForm(assetId) {
+  const form = document.querySelector(`[data-investment-movement-form="${assetId}"]`);
+  if (!form) return;
+  form.reset();
+  form.querySelector("[data-movement-id]").value = "";
+  form.querySelector("[data-movement-date]").value = todayInput();
+  form.querySelector("[data-movement-type]").value = investmentAssetById(assetId)?.type === "stocks" ? "purchase" : "contribution";
+  form.querySelector('button[type="submit"]').textContent = "Salvar movimentação";
+}
+
+function saveInvestment(event) {
+  event.preventDefault();
+  const id = $("investmentId").value || uid();
+  const index = investmentState.assets.findIndex(asset => asset.id === id);
+  const isNew = index < 0;
+  const asset = {
+    id,
+    name: $("investmentName").value.trim(),
+    type: investmentTypes[$("investmentType").value] ? $("investmentType").value : "fixed_income",
+    institution: $("investmentInstitution").value.trim()
+  };
+  if (isNew) investmentState.assets.push(asset);
+  else investmentState.assets[index] = asset;
+
+  const initialValue = Number($("investmentInitialContribution").value || 0);
+  if (isNew && initialValue > 0) {
+    investmentState.movements.push({
+      id: uid(),
+      assetId: id,
+      date: $("investmentInitialDate").value || todayInput(),
+      type: asset.type === "stocks" ? "purchase" : "contribution",
+      value: initialValue,
+      note: asset.type === "stocks" ? "Compra inicial" : "Aporte inicial"
+    });
+  }
+  resetInvestmentForm();
+  renderAll();
+  toast(isNew ? "Investimento cadastrado." : "Investimento atualizado.");
+}
+
+function editInvestment(id) {
+  const asset = investmentAssetById(id);
+  if (!asset) return;
+  const form = document.querySelector(`[data-investment-category-form="${asset.type}"]`);
+  if (!form) return;
+  form.querySelector("[data-investment-id]").value = asset.id;
+  form.querySelector("[data-investment-name]").value = asset.name;
+  form.querySelector("[data-investment-institution]").value = asset.institution;
+  form.querySelector("[data-investment-initial]").value = "";
+  form.querySelector("[data-investment-initial]").disabled = true;
+  form.querySelector("[data-investment-initial-date]").disabled = true;
+  form.querySelector('button[type="submit"]').textContent = "Atualizar";
+  form.scrollIntoView({ behavior: "smooth", block: "center" });
+  form.querySelector("[data-investment-name]").focus();
+}
+
+function deleteInvestment(id) {
+  const asset = investmentAssetById(id);
+  if (!asset) return;
+  confirmAction("Excluir investimento", `O investimento ${asset.name} e todas as suas movimentações serão apagados.`, () => {
+    investmentState.assets = investmentState.assets.filter(item => item.id !== id);
+    investmentState.movements = investmentState.movements.filter(item => item.assetId !== id);
+    resetCategoryInvestmentForm(asset.type);
+    renderAll();
+    toast("Investimento excluído.");
+  });
+}
+
+function resetInvestmentForm() {
+  $("investmentForm").reset();
+  $("investmentId").value = "";
+  $("investmentType").value = "treasury";
+  $("investmentInitialContribution").disabled = false;
+  $("investmentInitialDate").disabled = false;
+  $("investmentInitialDate").value = todayInput();
+  $("investmentFormTitle").textContent = "Novo investimento";
+}
+
+function startInvestmentMovement(assetId) {
+  resetMovementForm();
+  $("movementInvestment").value = assetId;
+  $("movementValue").focus();
+  $("movementForm").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function saveInvestmentMovement(event) {
+  event.preventDefault();
+  const assetId = $("movementInvestment").value;
+  if (!investmentAssetById(assetId)) {
+    toast("Cadastre um investimento antes da movimentação.", "error");
+    return;
+  }
+  const id = $("movementId").value || uid();
+  const previousMovement = investmentState.movements.find(item => item.id === id);
+  const movement = {
+    id,
+    assetId,
+    date: $("movementDate").value,
+    type: movementTypes[$("movementType").value] ? $("movementType").value : "contribution",
+    value: Number($("movementValue").value),
+    note: $("movementNote").value.trim()
+  };
+  if (previousMovement && previousMovement.assetId !== assetId && investmentSummary(previousMovement.assetId, id).balance < 0) {
+    toast("A alteração deixaria o investimento anterior com saldo negativo.", "error");
+    return;
+  }
+  const balanceWithoutEditedMovement = investmentSummary(assetId, id).balance;
+  if (balanceWithoutEditedMovement + movementBalanceEffect(movement) < 0) {
+    toast("A saída não pode ser maior que o saldo deste investimento.", "error");
+    return;
+  }
+  const index = investmentState.movements.findIndex(item => item.id === id);
+  if (index >= 0) investmentState.movements[index] = movement;
+  else investmentState.movements.push(movement);
+  resetMovementForm();
+  renderAll();
+  toast("Movimentação salva. O saldo foi recalculado.");
+}
+
+function renderMovementHistory() {
+  const month = $("movementMonthFilter").value;
+  const assetId = $("movementAssetFilter").value;
+  const movements = [...investmentState.movements]
+    .filter(item => (!month || item.date.slice(0, 7) === month) && (!assetId || item.assetId === assetId))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  $("movementTable").innerHTML = movements.map(item => {
+    const asset = investmentAssetById(item.assetId);
+    return `<tr>
+      <td>${formatDateBR(item.date)}</td>
+      <td>${escapeHTML(asset?.name || "Investimento removido")}</td>
+      <td><span class="status movement-${item.type}">${movementTypes[item.type] || "Movimentação"}</span></td>
+      <td><strong>${money(item.value)}</strong></td>
+      <td>${escapeHTML(item.note || "—")}</td>
+      <td><div class="actions">
+        <button class="btn secondary small" onclick="editInvestmentMovement('${escapeHTML(item.id)}')">Editar</button>
+        <button class="btn danger small" onclick="deleteInvestmentMovement('${escapeHTML(item.id)}')">Excluir</button>
+      </div></td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="6" class="muted">Nenhuma movimentação encontrada.</td></tr>';
+}
+
+function editInvestmentMovement(id) {
+  const movement = investmentState.movements.find(item => item.id === id);
+  if (!movement) return;
+  const form = [...document.querySelectorAll("[data-investment-movement-form]")]
+    .find(item => item.dataset.investmentMovementForm === movement.assetId);
+  if (!form) return;
+  form.closest("details").open = true;
+  form.querySelector("[data-movement-id]").value = movement.id;
+  form.querySelector("[data-movement-date]").value = movement.date;
+  form.querySelector("[data-movement-type]").value = movement.type;
+  form.querySelector("[data-movement-value]").value = movement.value;
+  form.querySelector("[data-movement-note]").value = movement.note;
+  form.querySelector('button[type="submit"]').textContent = "Atualizar movimentação";
+  form.scrollIntoView({ behavior: "smooth", block: "center" });
+  form.querySelector("[data-movement-value]").focus();
+}
+
+function deleteInvestmentMovement(id) {
+  const movement = investmentState.movements.find(item => item.id === id);
+  if (!movement) return;
+  confirmAction("Excluir movimentação", "O registro será removido e o saldo será recalculado.", () => {
+    investmentState.movements = investmentState.movements.filter(item => item.id !== id);
+    renderAll();
+    toast("Movimentação excluída.");
+  });
+}
+
+function resetMovementForm() {
+  $("movementForm").reset();
+  $("movementId").value = "";
+  $("movementDate").value = todayInput();
+  $("movementType").value = "contribution";
+  $("movementFormTitle").textContent = "Nova movimentação";
+  renderInvestmentSelects();
+}
+
+function clearMovementFilters() {
+  $("movementMonthFilter").value = "";
+  $("movementAssetFilter").value = "";
+  renderMovementHistory();
+}
+
+function renderInvestmentCharts() {}
+
 function exportInvestmentBackup() {
   const backup = { version: 1, exportedAt: new Date().toISOString(), investments: investmentState };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
@@ -2709,7 +3160,6 @@ async function closeMonth() {
 
 function buildPDFReport() {
   const t = totals();
-  const investmentTotals = investmentSummary();
   const categoryRows = expensesByCategory();
   const houseRows = houseResultRows();
   const houseExpensesRows = houseExpenseReportRows();
@@ -2750,8 +3200,14 @@ function buildPDFReport() {
 
     <h2>Investimentos</h2>
     <table>
-      <tr><th>Patrimônio atual</th><th>Aportado líquido</th><th>Aportes no mês</th><th>Resultado acumulado</th><th>Proventos</th></tr>
-      <tr><td>${money(investmentTotals.current)}</td><td>${money(investmentTotals.netContributed)}</td><td>${money(investmentMovementsForMonth(currentMonthKey(), "contribution"))}</td><td>${money(investmentTotals.result)}</td><td>${money(investmentTotals.income)}</td></tr>
+      <tr><th>Tipo</th><th>Total pelas movimentações</th><th>Aportes e compras</th><th>Resgates e vendas</th></tr>
+      ${Object.entries(investmentTypes).map(([type, config]) => {
+        const assetIds = new Set(investmentState.assets.filter(asset => asset.type === type).map(asset => asset.id));
+        const movements = investmentState.movements.filter(item => assetIds.has(item.assetId));
+        const entries = movements.filter(item => ["contribution", "purchase"].includes(item.type)).reduce((sum, item) => sum + Number(item.value || 0), 0);
+        const exits = movements.filter(item => ["withdrawal", "sale"].includes(item.type)).reduce((sum, item) => sum + Number(item.value || 0), 0);
+        return `<tr><td>${config.label}</td><td>${money(entries - exits)}</td><td>${money(entries)}</td><td>${money(exits)}</td></tr>`;
+      }).join("")}
     </table>
 
     <h2>Gastos por categoria</h2>
@@ -2825,11 +3281,16 @@ function reportTable(list, includePaid = false) {
 
 function supermarketReportTable() {
   const list = state.supermarketExpenses || [];
+  const shoppingItems = state.supermarketItems || [];
   return `<table>
     <tr><th>Valor</th><th>Forma de pagamento</th></tr>
     ${list.map(item => `<tr><td>${money(item.value)}</td><td>${labelSupermarketPayment(item.payment)}</td></tr>`).join("") || `<tr><td colspan="2">Sem registros.</td></tr>`}
     <tr><th>Total</th><th>${money(sumSupermarketExpenses())}</th></tr>
-  </table>`;
+  </table>
+  <h3>Lista de compras</h3>
+  <ul class="supermarket-report-list">
+    ${shoppingItems.map(item => `<li>${item.checked ? "☑" : "☐"} ${escapeHTML(item.text)}</li>`).join("") || "<li>Sem itens.</li>"}
+  </ul>`;
 }
 
 function toast(message, type = "success") {
@@ -2853,6 +3314,7 @@ window.editSupermarketExpense = editSupermarketExpense;
 window.deleteSupermarketExpense = deleteSupermarketExpense;
 window.editInvestment = editInvestment;
 window.deleteInvestment = deleteInvestment;
+window.startInvestmentMovement = startInvestmentMovement;
 window.editInvestmentMovement = editInvestmentMovement;
 window.deleteInvestmentMovement = deleteInvestmentMovement;
 
