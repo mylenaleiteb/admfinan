@@ -70,6 +70,20 @@ body {
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
+.notes-layout { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.note-editor form { display: grid; gap: 14px; }
+.note-editor h3 { margin-top: 0; }
+.note-editor textarea { min-height: 280px; line-height: 1.8; font-size: 14px; }
+.notes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.note-card { min-width: 0; padding: 18px; border: 1px solid #d9c97c; border-radius: 12px; background: #fff8d6; color: var(--text); box-shadow: 0 3px 8px rgba(0,0,0,.08); }
+.note-card h4 { margin: 0 0 10px; font-size: 16px; overflow-wrap: anywhere; }
+.note-preview { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; font-size: 13px; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.note-card .actions { margin-top: 16px; flex-wrap: wrap; }
+.notes-empty { padding: 30px; text-align: center; line-height: 1.8; border: 1px dashed var(--border); border-radius: 12px; color: var(--muted); }
+body.dark .note-card { background: #393524; border-color: #706541; }
+@media (max-width: 900px) { .notes-layout { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .notes-grid { grid-template-columns: 1fr; } }
+
 .auth-screen {
   position: fixed;
   inset: 0;

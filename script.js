@@ -31,6 +31,7 @@ const emptyState = () => ({
 });
 
 let state = emptyState();
+let notesState = [];
 let categories = [];
 let categoryChart;
 let investmentAllocationChart;
@@ -505,6 +506,7 @@ function buildAppPayload() {
     investments: investmentState,
     work: workState,
     travel: travelState,
+    notes: notesState,
     theme: document.body.classList.contains("dark") ? "dark" : "light"
   };
 }
@@ -540,6 +542,8 @@ function applyAppPayload(payload) {
   const overtimePayloadMigrated = Array.isArray(payload?.work?.overtimeHours);
   workState = normalizeWorkState(payload?.work);
   travelState = normalizeTravelState(payload?.travel);
+  notesState = normalizeNotes(payload?.notes);
+  resetNoteForm();
   const savedPackingCatalog = Array.isArray(payload?.travel?.packingItems)
     ? payload.travel.packingItems.map(item => `${item?.category || "other"}\u0000${String(item?.text || "").trim().toLocaleLowerCase("pt-BR")}`)
     : [];
@@ -759,6 +763,9 @@ async function signOut() {
   remoteReady = false;
   state = emptyState();
   categories = [];
+  notesState = [];
+  resetNoteForm();
+  renderNotes();
   investmentState = normalizeInvestmentState(null);
   $("userSession").hidden = true;
   $("authPassword").value = "";
@@ -888,6 +895,15 @@ function bindEvents() {
     if (event.target === $("calendarModal")) closeAppointmentModal();
   });
   $("taskForm").addEventListener("submit", saveTask);
+  $("noteForm").addEventListener("submit", saveNote);
+  $("newNote").addEventListener("click", () => changeNoteEditor());
+  $("cancelNote").addEventListener("click", () => changeNoteEditor());
+  $("notesList").addEventListener("click", (event) => {
+    const edit = event.target.closest("[data-note-edit]");
+    const remove = event.target.closest("[data-note-delete]");
+    if (edit) changeNoteEditor(edit.dataset.noteEdit);
+    if (remove) deleteNote(remove.dataset.noteDelete);
+  });
   $("clearTaskForm").addEventListener("click", resetTaskForm);
   $("taskBoard").addEventListener("click", handleTaskBoardClick);
   $("taskBoard").addEventListener("change", changeTaskStatus);
@@ -981,6 +997,7 @@ function openSection(id) {
   if (id === "dashboard") renderCharts();
   if (id === "calendar") renderCalendar();
   if (id === "tasks") renderTasks();
+  if (id === "notes") renderNotes();
   if (id === "travel") renderTravel();
   if (id === "work") renderWork();
 }
@@ -1017,6 +1034,7 @@ function expensesByCategory() {
 }
 
 function renderAll() {
+  renderNotes();
   renderSelects();
   renderDashboard();
   renderList("incomes");
@@ -1219,7 +1237,7 @@ function saveAppointment(event) {
   toast("Compromisso salvo.");
 }
 
-function renderDayAppointments(date, readOnly = date < todayInput()) {
+function renderDayAppointments(date) {
   const appointments = appointmentsForDate(date);
   $("dayAppointments").innerHTML = appointments.length ? appointments.map(item => `
     <article class="day-appointment">
@@ -1227,7 +1245,7 @@ function renderDayAppointments(date, readOnly = date < todayInput()) {
         <strong>${item.time ? `${item.time} · ` : ""}${escapeHTML(item.name)}</strong>
         ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
       </div>
-      ${readOnly ? "" : `<button class="btn danger small" type="button" data-appointment-id="${escapeHTML(item.id)}" data-date="${date}">Excluir</button>`}
+      <button class="btn danger small" type="button" data-appointment-id="${escapeHTML(item.id)}" data-date="${date}">Excluir</button>
     </article>
   `).join("") : '<p class="muted empty-appointments">Nenhum compromisso neste dia.</p>';
 }
@@ -1235,10 +1253,6 @@ function renderDayAppointments(date, readOnly = date < todayInput()) {
 function deleteAppointment(id, date) {
   const appointment = state.appointments.find(item => item.id === id);
   if (!appointment) return;
-  if (appointment.date < todayInput()) {
-    toast("Não é possível excluir compromissos de uma data que já passou.", "error");
-    return;
-  }
   confirmAction("Excluir compromisso", `Deseja excluir “${appointment.name}”?`, () => {
     state.appointments = state.appointments.filter(item => item.id !== id);
     renderCalendar();
@@ -1246,6 +1260,89 @@ function deleteAppointment(id, date) {
     saveAll();
     toast("Compromisso excluído.");
   });
+}
+
+function normalizeNotes(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter(item => item && typeof item === "object").map(item => ({
+    id: String(item.id || uid()),
+    title: String(item.title || "").slice(0, 120),
+    body: String(item.body || "").slice(0, 20000),
+    updatedAt: Number.isFinite(Date.parse(item.updatedAt)) ? new Date(item.updatedAt).toISOString() : ""
+  })).filter(item => item.title.trim() || item.body.trim());
+}
+
+function resetNoteForm() {
+  $("noteForm").reset();
+  $("noteId").value = "";
+  $("noteFormTitle").textContent = "Nova anotação";
+  $("noteFeedback").textContent = "Clique em Salvar anotação para guardar suas alterações.";
+}
+
+function changeNoteEditor(id = "") {
+  const previous = notesState.find(item => item.id === $("noteId").value);
+  const dirty = $("noteTitle").value !== (previous?.title || "") || $("noteBody").value !== (previous?.body || "");
+  const open = () => {
+    resetNoteForm();
+    const note = notesState.find(item => item.id === id);
+    if (note) {
+      $("noteId").value = note.id;
+      $("noteTitle").value = note.title;
+      $("noteBody").value = note.body;
+      $("noteFormTitle").textContent = "Editar anotação";
+    }
+    $("noteTitle").focus();
+  };
+  if (dirty) confirmAction("Descartar alterações?", "As alterações que ainda não foram salvas serão perdidas.", open);
+  else open();
+}
+
+function saveNote(event) {
+  event.preventDefault();
+  const title = $("noteTitle").value.trim().slice(0, 120);
+  const body = $("noteBody").value.slice(0, 20000);
+  if (!title && !body.trim()) {
+    $("noteFeedback").textContent = "Escreva um título ou um texto antes de salvar.";
+    $("noteBody").focus();
+    return;
+  }
+  const id = $("noteId").value || uid();
+  const note = { id, title, body, updatedAt: new Date().toISOString() };
+  const index = notesState.findIndex(item => item.id === id);
+  if (index >= 0) notesState[index] = note;
+  else notesState.push(note);
+  saveAll();
+  $("noteId").value = id;
+  $("noteTitle").value = title;
+  $("noteFormTitle").textContent = "Editar anotação";
+  $("noteFeedback").textContent = "Anotação salva.";
+  renderNotes();
+}
+
+function deleteNote(id) {
+  const note = notesState.find(item => item.id === id);
+  if (!note) return;
+  confirmAction("Excluir anotação", `Deseja excluir “${note.title || "Sem título"}”? Esta ação não pode ser desfeita.`, () => {
+    notesState = notesState.filter(item => item.id !== id);
+    if ($("noteId").value === id) resetNoteForm();
+    saveAll();
+    renderNotes();
+    toast("Anotação excluída.");
+  });
+}
+
+function renderNotes() {
+  $("noteCount").textContent = `${notesState.length} ${notesState.length === 1 ? "anotação" : "anotações"}`;
+  $("notesList").innerHTML = [...notesState].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(note => `
+    <article class="note-card">
+      <h4>${escapeHTML(note.title || "Sem título")}</h4>
+      <p class="note-preview">${escapeHTML(note.body)}</p>
+      <small class="muted">${note.updatedAt ? `Editada em ${new Date(note.updatedAt).toLocaleString("pt-BR")}` : ""}</small>
+      <div class="actions">
+        <button class="btn secondary small" type="button" data-note-edit="${escapeHTML(note.id)}">Abrir / editar</button>
+        <button class="btn danger small" type="button" data-note-delete="${escapeHTML(note.id)}">Excluir</button>
+      </div>
+    </article>`).join("") || '<p class="notes-empty">📝 Nenhuma anotação ainda. Escreva sua primeira nota e clique em Salvar anotação.</p>';
 }
 
 function saveTask(event) {

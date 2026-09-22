@@ -47,6 +47,7 @@
         <button class="active" data-section="dashboard">📊 Dashboard</button>
         <button data-section="calendar">📅 Calendário</button>
         <button data-section="tasks">✅ Lista de tarefas</button>
+        <button data-section="notes">📝 Anotações importantes</button>
         <button data-section="travel">✈️ Planejamento de Viagens</button>
         <button data-section="incomes">⬆️ Entradas</button>
         <button data-section="work">💼 Trabalho</button>
@@ -183,6 +184,26 @@
             <header><span>Feito</span><strong id="taskCount-done">0</strong></header>
             <div class="task-list" id="taskList-done"></div>
           </section>
+        </div>
+      </section>
+
+      <section class="section" id="notes">
+        <div class="section-head">
+          <div><h3>Anotações importantes</h3><p class="muted">Guarde ideias, lembretes e informações para consultar quando precisar.</p></div>
+          <button class="btn" type="button" id="newNote">＋ Nova anotação</button>
+        </div>
+        <div class="notes-layout">
+          <article class="card note-editor">
+            <h3 id="noteFormTitle">Nova anotação</h3>
+            <form id="noteForm">
+              <input type="hidden" id="noteId" />
+              <div class="field"><label for="noteTitle">Título</label><input id="noteTitle" maxlength="120" placeholder="Título da anotação (opcional)" /></div>
+              <div class="field"><label for="noteBody">Anotação</label><textarea id="noteBody" rows="14" maxlength="20000" placeholder="Escreva aqui…"></textarea></div>
+              <div class="actions"><button class="btn" type="submit">Salvar anotação</button><button class="btn secondary" type="button" id="cancelNote">Cancelar</button></div>
+              <p class="muted" id="noteFeedback" role="status">Clique em Salvar anotação para guardar suas alterações.</p>
+            </form>
+          </article>
+          <div><p class="muted" id="noteCount" aria-live="polite"></p><div class="notes-grid" id="notesList"></div></div>
         </div>
       </section>
 
