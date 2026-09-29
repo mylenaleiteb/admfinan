@@ -51,7 +51,7 @@ let activeMonthKey = "";
 let pendingConfirm = null;
 
 const $ = (id) => document.getElementById(id);
-const monthName = () => new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date());
+const monthName = () => new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date(`${activeMonthKey || currentMonthKey()}-01T12:00:00`));
 const currentMonthKey = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -229,15 +229,6 @@ function loadJSON(key, fallback) {
     return JSON.parse(localStorage.getItem(key)) ?? fallback;
   } catch {
     return fallback;
-  }
-}
-
-function ensureCurrentMonth() {
-  const savedMonth = localStorage.getItem(STORAGE.month);
-  if (savedMonth && savedMonth !== currentMonthKey()) {
-    state = emptyState();
-    localStorage.setItem(STORAGE.monthly, JSON.stringify(state));
-    localStorage.setItem(STORAGE.month, currentMonthKey());
   }
 }
 
@@ -567,14 +558,8 @@ function applyAppPayload(payload) {
   }
   const salaryImported = importSalaryFromEntries(activeMonthKey);
 
-  const monthRolled = activeMonthKey !== currentMonthKey();
-  if (monthRolled) {
-    activeMonthKey = currentMonthKey();
-    state = emptyState();
-  }
-
   document.body.classList.toggle("dark", payload?.theme === "dark");
-  return monthRolled || salaryImported || workPayloadMigrated || overtimePayloadMigrated || overtimeDateImported || overtimeImported || travelPackingMigrated || investmentPayloadMigrated;
+  return salaryImported || workPayloadMigrated || overtimePayloadMigrated || overtimeDateImported || overtimeImported || travelPackingMigrated || investmentPayloadMigrated;
 }
 
 function userCacheKey() {
@@ -1034,6 +1019,7 @@ function expensesByCategory() {
 }
 
 function renderAll() {
+  $("currentMonthLabel").textContent = monthName();
   renderNotes();
   renderSelects();
   renderDashboard();
@@ -1719,7 +1705,10 @@ function saveItem(event, moduleKey) {
     name: $(config.name).value.trim(),
     value: Number($(config.value).value),
     categoryId: $(config.category).value,
-    ...(isExpense ? { paid: index >= 0 ? Boolean(state[config.list][index].paid) : false } : {})
+    ...(isExpense ? {
+      paid: index >= 0 ? Boolean(state[config.list][index].paid) : false,
+      createdAt: index >= 0 ? (state[config.list][index].createdAt || "") : todayInput()
+    } : {})
   };
 
   if (index >= 0) state[config.list][index] = item;
@@ -1742,7 +1731,7 @@ function renderList(moduleKey) {
       <td>${escapeHTML(item.name)}</td>
       <td><strong>${money(item.value)}</strong></td>
       <td><span class="category-chip" style="background:${category.color}">${category.icon} ${escapeHTML(category.name)}</span></td>
-      ${isExpense ? `<td>
+      ${isExpense ? `<td>${formatDateBR(item.createdAt)}</td><td>
         <label class="paid-check" title="Marcar como pago">
           <input type="checkbox" ${item.paid ? "checked" : ""} onchange="togglePaid('${moduleKey}', '${item.id}')" />
           <span></span>
@@ -1755,7 +1744,7 @@ function renderList(moduleKey) {
     </tr>`;
   }).join("");
 
-  $(config.table).innerHTML = rows || `<tr><td colspan="${isExpense ? 5 : 4}" class="muted">${config.empty}</td></tr>`;
+  $(config.table).innerHTML = rows || `<tr><td colspan="${isExpense ? 6 : 4}" class="muted">${config.empty}</td></tr>`;
   $(config.total).textContent = money(sumList(list));
   $(config.footer).textContent = money(sumList(list));
 }
@@ -3381,9 +3370,10 @@ async function closeMonth() {
       remaining -= pageHeight;
     }
 
-    pdf.save(`relatorio-financeiro-${currentMonthKey()}.pdf`);
+    await pdf.save(`relatorio-financeiro-${activeMonthKey || currentMonthKey()}.pdf`, { returnPromise: true });
     state = emptyState();
     activeMonthKey = currentMonthKey();
+    saveUserCache(buildAppPayload(), true);
     renderAll();
     await saveRemoteNow();
     toast("PDF exportado e dados mensais apagados.");
@@ -3508,9 +3498,9 @@ function taskReportTable() {
 
 function reportTable(list, includePaid = false) {
   return `<table>
-    <tr><th>Nome</th><th>Categoria</th><th>Valor</th>${includePaid ? "<th>Pago</th>" : ""}</tr>
-    ${list.map(item => `<tr><td>${escapeHTML(item.name)}</td><td>${escapeHTML(categoryById(item.categoryId).name)}</td><td>${money(item.value)}</td>${includePaid ? `<td>${item.paid ? "Sim" : "Não"}</td>` : ""}</tr>`).join("") || `<tr><td colspan="${includePaid ? 4 : 3}">Sem registros.</td></tr>`}
-    <tr><th colspan="2">Total</th><th>${money(sumList(list))}</th>${includePaid ? "<th></th>" : ""}</tr>
+    <tr><th>Nome</th><th>Categoria</th><th>Valor</th>${includePaid ? "<th>Data de inserção</th><th>Pago</th>" : ""}</tr>
+    ${list.map(item => `<tr><td>${escapeHTML(item.name)}</td><td>${escapeHTML(categoryById(item.categoryId).name)}</td><td>${money(item.value)}</td>${includePaid ? `<td>${formatDateBR(item.createdAt)}</td><td>${item.paid ? "Sim" : "Não"}</td>` : ""}</tr>`).join("") || `<tr><td colspan="${includePaid ? 5 : 3}">Sem registros.</td></tr>`}
+    <tr><th colspan="2">Total</th><th>${money(sumList(list))}</th>${includePaid ? "<th></th><th></th>" : ""}</tr>
   </table>`;
 }
 
