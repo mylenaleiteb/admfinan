@@ -44,6 +44,7 @@
       </div>
 
       <nav class="nav" id="nav">
+        <button data-section="calculator">🧮 Calculadora</button>
         <button class="active" data-section="dashboard">📊 Dashboard</button>
         <button data-section="calendar">📅 Calendário</button>
         <button data-section="tasks">✅ Lista de tarefas</button>
@@ -130,6 +131,39 @@
             <span class="muted">Fixas, variáveis, supermercado e casa</span>
           </div>
           <div class="expense-percent-list" id="expenseTypePercentages"></div>
+        </article>
+      </section>
+
+      <section class="section" id="calculator">
+        <article class="card calculator-card">
+          <h3>Calculadora</h3>
+          <p class="muted">Faça cálculos de soma, subtração, multiplicação e divisão.</p>
+          <div class="calculator-screen">
+            <div id="calculatorExpression" class="muted" aria-label="Operação atual"></div>
+            <output id="calculatorDisplay" aria-live="polite" aria-label="Resultado">0</output>
+          </div>
+          <div class="calculator-keys" id="calculatorKeys">
+            <button class="btn secondary" type="button" data-key="clear">C</button>
+            <button class="btn secondary" type="button" data-key="backspace" aria-label="Apagar último dígito">⌫</button>
+            <button class="btn secondary" type="button" data-key="sign" aria-label="Inverter sinal">±</button>
+            <button class="btn" type="button" data-key="/" aria-label="Dividir">÷</button>
+            <button class="btn secondary" type="button" data-key="7">7</button>
+            <button class="btn secondary" type="button" data-key="8">8</button>
+            <button class="btn secondary" type="button" data-key="9">9</button>
+            <button class="btn" type="button" data-key="*" aria-label="Multiplicar">×</button>
+            <button class="btn secondary" type="button" data-key="4">4</button>
+            <button class="btn secondary" type="button" data-key="5">5</button>
+            <button class="btn secondary" type="button" data-key="6">6</button>
+            <button class="btn" type="button" data-key="-" aria-label="Subtrair">−</button>
+            <button class="btn secondary" type="button" data-key="1">1</button>
+            <button class="btn secondary" type="button" data-key="2">2</button>
+            <button class="btn secondary" type="button" data-key="3">3</button>
+            <button class="btn" type="button" data-key="+" aria-label="Somar">+</button>
+            <button class="btn secondary calculator-zero" type="button" data-key="0">0</button>
+            <button class="btn secondary" type="button" data-key="," aria-label="Vírgula decimal">,</button>
+            <button class="btn" type="button" data-key="=" aria-label="Calcular resultado">=</button>
+          </div>
+          <p class="muted">Use os botões ou o teclado. Enter calcula, Backspace apaga e Esc limpa. Operações em sequência são calculadas na ordem digitada.</p>
         </article>
       </section>
 
@@ -695,5 +729,6 @@
 
   <script src="supabase-config.js"></script>
   <script src="script.js"></script>
+  <script src="calculator.js"></script>
 </body>
 </html>

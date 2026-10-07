@@ -70,6 +70,16 @@ body {
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
+.calculator-card { width: 100%; max-width: 380px; }
+.calculator-screen { margin: 16px 0; padding: 14px; background: var(--surface-3); border: 1px solid var(--border); text-align: right; }
+#calculatorExpression { min-height: 18px; overflow-wrap: anywhere; }
+#calculatorDisplay { display: block; font-size: 30px; line-height: 1.4; overflow-wrap: anywhere; }
+#calculatorDisplay.calculator-error { font-size: 16px; color: var(--danger); }
+.calculator-keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.calculator-keys .btn { min-height: 48px; font-size: 20px; }
+.calculator-zero { grid-column: span 2; }
+.calculator-card p { line-height: 1.6; }
+
 .notes-layout { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .note-editor form { display: grid; gap: 14px; }
 .note-editor h3 { margin-top: 0; }
