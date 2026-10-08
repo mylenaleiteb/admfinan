@@ -1007,6 +1007,14 @@ function expenseItems() {
   return [...state.fixedExpenses, ...state.variableExpenses];
 }
 
+function dashboardHouseExpensesTotal() {
+  const housingCategoryIds = new Set(categories
+    .filter(category => category.name.trim().toLocaleLowerCase("pt-BR") === "moradia")
+    .map(category => category.id));
+  const housingExpenses = expenseItems().filter(item => housingCategoryIds.has(item.categoryId));
+  return sumHouseExpenses(state.houseExpenses) + sumList(housingExpenses);
+}
+
 function expensesByCategory() {
   return categories
     .map(category => {
@@ -1639,7 +1647,7 @@ function renderDashboard() {
   $("dashExpense").textContent = money(t.expense);
   $("dashBalance").textContent = money(t.balance);
   $("dashFixed").textContent = money(t.fixed);
-  $("dashInvestments").textContent = money(investmentEntriesForMonth(currentMonthKey()));
+  $("dashHouseExpenses").textContent = money(dashboardHouseExpensesTotal());
   renderHouseAnalysis();
   renderExpenseTypePercentages();
 }
